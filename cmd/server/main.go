@@ -68,6 +68,7 @@ func main() {
 	// Register specific routes BEFORE the root handler
 	http.HandleFunc("/health", corsHandler(createHealthCheck(redisClient, postgresClient)))
 	http.HandleFunc("/ping", corsHandler(createHealthCheck(redisClient, postgresClient)))
+	http.HandleFunc("/api/auth/register", corsHandler(rateLimiter.LimitMiddleware(authHandler.Register)))
 	http.HandleFunc("/api/auth/google/signin", corsHandler(rateLimiter.LimitMiddleware(authHandler.GoogleSignIn)))
 	http.HandleFunc("/api/auth/logout", corsHandler(rateLimiter.LimitMiddleware(authHandler.Logout)))
 	http.HandleFunc("/api/auth/forgot-password", corsHandler(rateLimiter.LimitMiddleware(authHandler.ForgotPassword)))

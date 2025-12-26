@@ -45,3 +45,10 @@ type ResetPasswordRequest struct {
 	NewPassword string `json:"new_password"` // Optional: frontend uses this field (either password or new_password must be provided)
 }
 
+// RegisterRequest represents the request to register a new user
+type RegisterRequest struct {
+	FullName string `json:"full_name"` // Required: user's full name
+	Email    string `json:"email"`      // Required: user's email address
+	Password string `json:"password"`   // Required: user's password (min 6 characters)
+}
+

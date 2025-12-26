@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log"
+	"strings"
 	"print-pro-backend/internal/infrastructure"
 	"time"
 )
@@ -48,12 +49,22 @@ func (s *OTPService) GenerateOTP(ctx context.Context, email string) (string, err
 func (s *OTPService) VerifyOTP(ctx context.Context, email, otp string) (bool, error) {
 	otpKey := fmt.Sprintf("otp:%s", email)
 	
+	// Trim whitespace from input OTP
+	otp = strings.TrimSpace(otp)
+	
 	storedOTP, err := s.redisClient.Get(ctx, otpKey)
 	if err != nil {
+		log.Printf("OTP not found in Redis for key: %s", otpKey)
 		return false, fmt.Errorf("OTP not found or expired")
 	}
 	
+	// Trim whitespace from stored OTP as well
+	storedOTP = strings.TrimSpace(storedOTP)
+	
+	log.Printf("Comparing OTP - Provided length: %d, Stored length: %d", len(otp), len(storedOTP))
+	
 	if storedOTP != otp {
+		log.Printf("OTP mismatch - Provided: '%s', Stored: '%s'", otp, storedOTP)
 		return false, fmt.Errorf("invalid OTP")
 	}
 	

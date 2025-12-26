@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/middleware"
 	"print-pro-backend/internal/models"
@@ -211,6 +212,124 @@ func (h *AuthHandler) GetEmail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Register handles user registration
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Register endpoint hit - Method: %s, URL: %s", r.Method, r.URL.Path)
+
+	if r.Method != http.MethodPost {
+		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only POST method is allowed")
+		return
+	}
+
+	var req models.RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+
+	// Validate input
+	if req.FullName == "" {
+		h.sendErrorResponse(w, http.StatusBadRequest, "Full name is required", "Full name field cannot be empty")
+		return
+	}
+
+	if req.Email == "" {
+		h.sendErrorResponse(w, http.StatusBadRequest, "Email is required", "Email field cannot be empty")
+		return
+	}
+
+	if req.Password == "" {
+		h.sendErrorResponse(w, http.StatusBadRequest, "Password is required", "Password field cannot be empty")
+		return
+	}
+
+	if len(req.Password) < 6 {
+		h.sendErrorResponse(w, http.StatusBadRequest, "Password too short", "Password must be at least 6 characters")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Check if user already exists
+	existingUser, err := h.userRepository.GetByEmail(ctx, req.Email)
+	if err == nil && existingUser != nil {
+		h.sendErrorResponse(w, http.StatusConflict, "User already exists", "A user with this email already exists")
+		return
+	}
+
+	// Hash the password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("ERROR: Failed to hash password - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to process password", err.Error())
+		return
+	}
+
+	// Create user in database
+	dbUser, err := h.userRepository.Create(ctx, req.FullName, req.Email, string(hashedPassword))
+	if err != nil {
+		log.Printf("ERROR: Failed to create user - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to create user", err.Error())
+		return
+	}
+
+	log.Printf("SUCCESS: User registered - ID: %d", dbUser.ID)
+
+	// Convert database user to auth user model
+	registeredUser := &models.User{
+		ID:        fmt.Sprintf("%d", dbUser.ID),
+		Email:     dbUser.Email,
+		Name:      dbUser.FullName,
+		Provider:  "email", // Regular email/password registration
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.CreatedAt,
+	}
+
+	// Generate session token
+	sessionToken, err := h.googleAuthService.GenerateSessionToken(registeredUser.ID)
+	if err != nil {
+		log.Printf("ERROR: Failed to generate session token - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate session token", err.Error())
+		return
+	}
+
+	// Store session in Redis
+	if err := h.sessionService.CreateSession(ctx, sessionToken, registeredUser); err != nil {
+		log.Printf("ERROR: Failed to create session in Redis: %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to create session", err.Error())
+		return
+	}
+
+	// Set secure HTTP-only cookie for the session token
+	cookie := &http.Cookie{
+		Name:     "session_token",
+		Value:    sessionToken,
+		Path:     "/",
+		MaxAge:   7 * 24 * 60 * 60, // 7 days
+		HttpOnly: true,              // Prevents JavaScript access (XSS protection)
+		Secure:   h.config.SecureCookies, // Set via config (true in production with HTTPS)
+		SameSite: http.SameSiteLaxMode,   // CSRF protection
+	}
+	
+	// Set domain if configured
+	if h.config.CookieDomain != "" {
+		cookie.Domain = h.config.CookieDomain
+	}
+	
+	http.SetCookie(w, cookie)
+	log.Printf("Cookie set in browser")
+
+	// Return success response with user info
+	response := models.GoogleSignInResponse{
+		Success: true,
+		Message: "User registered successfully",
+		User:    registeredUser,
+		Token:   sessionToken, // Include token in response for frontend flexibility
+	}
+
+	h.sendJSONResponse(w, http.StatusCreated, response)
+}
+
 // ForgotPassword handles password reset request - sends OTP to email
 func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Forgot password endpoint hit - Method: %s, URL: %s", r.Method, r.URL.Path)
@@ -296,8 +415,13 @@ func (h *AuthHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Verify OTP
-	valid, err := h.otpService.VerifyOTP(ctx, req.Email, req.OTP)
+	// Verify OTP (trim whitespace from email and OTP)
+	email := strings.TrimSpace(req.Email)
+	otp := strings.TrimSpace(req.OTP)
+	
+	log.Printf("Verifying OTP for email, OTP length: %d", len(otp))
+	
+	valid, err := h.otpService.VerifyOTP(ctx, email, otp)
 	if err != nil || !valid {
 		log.Printf("OTP verification failed: %v", err)
 		h.sendErrorResponse(w, http.StatusUnauthorized, "Invalid or expired OTP", "The OTP is invalid or has expired. Please request a new one.")
@@ -321,13 +445,13 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read body for debugging
+	// Read body for debugging (without logging sensitive data)
 	bodyBytes := make([]byte, 0)
 	if r.Body != nil {
 		var err error
 		bodyBytes, err = io.ReadAll(r.Body)
 		if err == nil {
-			log.Printf("Request body received: %s", string(bodyBytes))
+			log.Printf("Reset password request received")
 			// Reset body for JSON decoder
 			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
@@ -336,7 +460,6 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req models.ResetPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("Failed to decode request body: %v", err)
-		log.Printf("Raw request body was: %s", string(bodyBytes))
 		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid request body", fmt.Sprintf("Failed to parse JSON: %v", err))
 		return
 	}
@@ -348,7 +471,7 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		password = req.Password
 	}
 
-	log.Printf("Password reset request - Email: %s, Password length: %d", req.Email, len(password))
+	log.Printf("Password reset request - Password length: %d", len(password))
 
 	// Validate email
 	if req.Email == "" {
@@ -414,7 +537,7 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	// Delete reset token after successful password reset
 	h.otpService.DeleteResetToken(ctx, req.Email)
 
-	log.Printf("SUCCESS: Password reset completed for email: %s", req.Email)
+	log.Printf("SUCCESS: Password reset completed")
 
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true,
