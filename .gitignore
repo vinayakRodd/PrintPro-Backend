@@ -43,3 +43,9 @@ build-errors.log
 # Migration files
 migrations/001_create_tables.sql
 
+# Node modules (if any frontend dependencies are added)
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+

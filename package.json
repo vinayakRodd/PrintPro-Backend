@@ -1,0 +1,19 @@
+{
+  "name": "print-pro-backend",
+  "version": "1.0.0",
+  "description": "Print Pro Backend API",
+  "scripts": {
+    "format": "prettier --write \"**/*.{md,json,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{md,json,yml,yaml}\"",
+    "format:go": "go fmt ./...",
+    "format:all": "pnpm format && pnpm format:go"
+  },
+  "devDependencies": {
+    "prettier": "^3.2.5"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
+

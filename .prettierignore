@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+go.sum
+
+# Build outputs
+tmp/
+*.exe
+server.exe
+
+# Go files (use gofmt instead)
+**/*.go
+
+# Generated files
+*.generated.*
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+

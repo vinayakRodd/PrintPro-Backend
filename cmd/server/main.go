@@ -10,6 +10,7 @@ import (
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
 	"print-pro-backend/internal/middleware"
+	"print-pro-backend/internal/repositories"
 	"print-pro-backend/internal/services"
 	"time"
 )
@@ -45,9 +46,14 @@ func main() {
 	defer postgresClient.Close()
 	log.Printf("Connected to PostgreSQL database: %s", cfg.PostgresDB)
 
+	// Initialize repositories
+	userRepository := repositories.NewUserRepository(postgresClient.GetPool())
+
 	// Initialize services
-	googleAuthService := services.NewGoogleAuthService(cfg)
+	googleAuthService := services.NewGoogleAuthService(cfg, userRepository)
 	sessionService := services.NewSessionService(redisClient)
+	emailService := services.NewEmailService(cfg)
+	otpService := services.NewOTPService(redisClient)
 
 	// Initialize rate limiter (100 requests per minute)
 	rateLimiter := middleware.NewRateLimiter(redisClient, 100, time.Minute)
@@ -56,16 +62,24 @@ func main() {
 	authMiddlewareFunc := middleware.AuthMiddleware(sessionService)
 
 	// Initialize handlers
-	authHandler := api.NewAuthHandler(googleAuthService, sessionService, cfg)
+	authHandler := api.NewAuthHandler(googleAuthService, sessionService, emailService, otpService, userRepository, cfg)
 
 	// Register routes with CORS and rate limiting
-	http.HandleFunc("/", corsHandler(handler))
+	// Register specific routes BEFORE the root handler
 	http.HandleFunc("/health", corsHandler(createHealthCheck(redisClient, postgresClient)))
 	http.HandleFunc("/ping", corsHandler(createHealthCheck(redisClient, postgresClient)))
 	http.HandleFunc("/api/auth/google/signin", corsHandler(rateLimiter.LimitMiddleware(authHandler.GoogleSignIn)))
 	http.HandleFunc("/api/auth/logout", corsHandler(rateLimiter.LimitMiddleware(authHandler.Logout)))
-	// Protected route - requires authentication
+	http.HandleFunc("/api/auth/forgot-password", corsHandler(rateLimiter.LimitMiddleware(authHandler.ForgotPassword)))
+	http.HandleFunc("/api/auth/otp/generate", corsHandler(rateLimiter.LimitMiddleware(authHandler.ForgotPassword))) // Alias for frontend
+	http.HandleFunc("/api/auth/otp/verify", corsHandler(rateLimiter.LimitMiddleware(authHandler.VerifyOTP))) // OTP verification only
+	http.HandleFunc("/api/auth/reset-password", corsHandler(rateLimiter.LimitMiddleware(authHandler.ResetPassword)))
+	http.HandleFunc("/api/auth/password/reset", corsHandler(rateLimiter.LimitMiddleware(authHandler.ResetPassword))) // Alias for frontend
+	// Protected routes - require authentication
 	http.HandleFunc("/api/auth/me", corsHandler(rateLimiter.LimitMiddleware(authMiddlewareFunc(authHandler.GetMe))))
+	http.HandleFunc("/api/auth/email", corsHandler(rateLimiter.LimitMiddleware(authMiddlewareFunc(authHandler.GetEmail))))
+	// Root handler should be last
+	http.HandleFunc("/", corsHandler(handler))
 
 	port := ":" + cfg.Port
 	fmt.Printf("Server starting on port %s\n", port)
@@ -74,6 +88,15 @@ func main() {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	// Only handle root path, not API routes
+	if r.URL.Path != "/" {
+		log.Printf("Root handler - path not found: %s", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, `{"success": false, "message": "Not Found", "error": "Endpoint not found: %s"}`, r.URL.Path)
+		return
+	}
+	log.Printf("Root handler hit - Method: %s, URL: %s", r.Method, r.URL.Path)
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"message": "Print Pro Backend API", "status": "running"}`)
 }

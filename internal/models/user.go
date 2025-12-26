@@ -33,3 +33,15 @@ type ErrorResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// ForgotPasswordRequest represents the request to initiate password reset
+type ForgotPasswordRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// ResetPasswordRequest represents the request to reset password (OTP already verified)
+type ResetPasswordRequest struct {
+	Email       string `json:"email"`        // Required: email address
+	Password    string `json:"password"`    // Optional: for backward compatibility
+	NewPassword string `json:"new_password"` // Optional: frontend uses this field (either password or new_password must be provided)
+}
+

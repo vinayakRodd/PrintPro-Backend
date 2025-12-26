@@ -1,27 +1,46 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/middleware"
 	"print-pro-backend/internal/models"
+	"print-pro-backend/internal/repositories"
 	"print-pro-backend/internal/services"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // AuthHandler handles authentication-related requests
 type AuthHandler struct {
 	googleAuthService *services.GoogleAuthService
 	sessionService    *services.SessionService
+	emailService      *services.EmailService
+	otpService        *services.OTPService
+	userRepository    *repositories.UserRepository
 	config            *config.Config
 }
 
 // NewAuthHandler creates a new AuthHandler instance
-func NewAuthHandler(googleAuthService *services.GoogleAuthService, sessionService *services.SessionService, cfg *config.Config) *AuthHandler {
+func NewAuthHandler(
+	googleAuthService *services.GoogleAuthService,
+	sessionService *services.SessionService,
+	emailService *services.EmailService,
+	otpService *services.OTPService,
+	userRepository *repositories.UserRepository,
+	cfg *config.Config,
+) *AuthHandler {
 	return &AuthHandler{
 		googleAuthService: googleAuthService,
 		sessionService:    sessionService,
+		emailService:      emailService,
+		otpService:        otpService,
+		userRepository:    userRepository,
 		config:            cfg,
 	}
 }
@@ -175,13 +194,242 @@ func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	h.sendJSONResponse(w, http.StatusOK, response)
 }
 
+// GetEmail returns the email of the current authenticated user
+func (h *AuthHandler) GetEmail(w http.ResponseWriter, r *http.Request) {
+	// Get user from context (set by auth middleware)
+	user, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not found in session")
+		return
+	}
+
+	// Return email in response
+	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"email":   user.Email,
+		"message": "Email retrieved successfully",
+	})
+}
+
+// ForgotPassword handles password reset request - sends OTP to email
+func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Forgot password endpoint hit - Method: %s, URL: %s", r.Method, r.URL.Path)
+	
+	if r.Method != http.MethodPost {
+		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only POST method is allowed")
+		return
+	}
+
+	var req models.ForgotPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+
+	// Validate email
+	if req.Email == "" {
+		h.sendErrorResponse(w, http.StatusBadRequest, "Email is required", "Email field cannot be empty")
+		return
+	}
+
+	log.Printf("Forgot password API hit - generating OTP")
+
+	// Always generate and send OTP regardless of whether user exists
+	// This prevents email enumeration attacks
+	ctx := r.Context()
+	
+	log.Printf("Generating OTP for email")
+	// Generate OTP
+	otp, err := h.otpService.GenerateOTP(ctx, req.Email)
+	if err != nil {
+		log.Printf("Failed to generate OTP: %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate OTP", err.Error())
+		return
+	}
+	log.Printf("OTP generated successfully")
+
+	log.Printf("Sending OTP to email")
+	// Send OTP via email (always send, even if user doesn't exist)
+	err = h.emailService.SendOTPEmail(req.Email, otp)
+	if err != nil {
+		log.Printf("Failed to send OTP email: %v", err)
+		// Return error response with details
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to send OTP email", err.Error())
+		return
+	}
+
+	log.Printf("OTP sent successfully")
+
+	// Return success response
+	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "OTP sent successfully",
+	})
+}
+
+// VerifyOTP handles OTP verification only (without password reset)
+func (h *AuthHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Verify OTP endpoint hit - Method: %s, URL: %s", r.Method, r.URL.Path)
+	
+	if r.Method != http.MethodPost {
+		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only POST method is allowed")
+		return
+	}
+
+	var req struct {
+		Email string `json:"email"`
+		OTP   string `json:"otp"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Failed to decode request body: %v", err)
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+
+	// Validate input
+	if req.Email == "" || req.OTP == "" {
+		log.Printf("Missing required fields - Email: %v, OTP: %v", req.Email != "", req.OTP != "")
+		h.sendErrorResponse(w, http.StatusBadRequest, "All fields are required", "Email and OTP are required")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Verify OTP
+	valid, err := h.otpService.VerifyOTP(ctx, req.Email, req.OTP)
+	if err != nil || !valid {
+		log.Printf("OTP verification failed: %v", err)
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Invalid or expired OTP", "The OTP is invalid or has expired. Please request a new one.")
+		return
+	}
+
+	log.Printf("OTP verified successfully")
+
+	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "OTP verified successfully",
+	})
+}
+
+// ResetPassword handles password reset with OTP verification
+func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Reset password endpoint hit - Method: %s, URL: %s", r.Method, r.URL.Path)
+	
+	if r.Method != http.MethodPost {
+		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only POST method is allowed")
+		return
+	}
+
+	// Read body for debugging
+	bodyBytes := make([]byte, 0)
+	if r.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(r.Body)
+		if err == nil {
+			log.Printf("Request body received: %s", string(bodyBytes))
+			// Reset body for JSON decoder
+			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		}
+	}
+
+	var req models.ResetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Failed to decode request body: %v", err)
+		log.Printf("Raw request body was: %s", string(bodyBytes))
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid request body", fmt.Sprintf("Failed to parse JSON: %v", err))
+		return
+	}
+
+	// Use new_password field (frontend sends this)
+	password := req.NewPassword
+	if password == "" {
+		// Fallback to password field for backward compatibility
+		password = req.Password
+	}
+
+	log.Printf("Password reset request - Email: %s, Password length: %d", req.Email, len(password))
+
+	// Validate email
+	if req.Email == "" {
+		log.Printf("ERROR: Email is empty")
+		h.sendErrorResponse(w, http.StatusBadRequest, "Email is required", "Email field cannot be empty")
+		return
+	}
+
+	// Validate password
+	if password == "" {
+		log.Printf("ERROR: Password is empty")
+		h.sendErrorResponse(w, http.StatusBadRequest, "Password is required", "new_password field cannot be empty")
+		return
+	}
+
+	if len(password) < 6 {
+		log.Printf("ERROR: Password too short (length: %d)", len(password))
+		h.sendErrorResponse(w, http.StatusBadRequest, "Password too short", "Password must be at least 6 characters")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Check if reset token exists (OTP was already verified)
+	valid, err := h.otpService.VerifyResetToken(ctx, req.Email)
+	if err != nil || !valid {
+		log.Printf("ERROR: Reset token not found or expired")
+		h.sendErrorResponse(w, http.StatusUnauthorized, "OTP verification required", "Please verify your OTP first before resetting password")
+		return
+	}
+
+	// Check if user exists
+	user, err := h.userRepository.GetByEmail(ctx, req.Email)
+	if err != nil {
+		log.Printf("ERROR: User not found - %v", err)
+		h.sendErrorResponse(w, http.StatusNotFound, "User not found", "User with this email does not exist")
+		return
+	}
+
+
+	// Check if new password is same as current password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err == nil {
+		log.Printf("ERROR: New password is same as current password")
+		h.sendErrorResponse(w, http.StatusBadRequest, "Current password is same as new password", "Please choose a different password")
+		return
+	}
+
+	// Hash the new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("ERROR: Failed to hash password - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to process password", err.Error())
+		return
+	}
+
+	// Update password in database
+	if err := h.userRepository.UpdatePassword(ctx, req.Email, string(hashedPassword)); err != nil {
+		log.Printf("ERROR: Failed to update password in database - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to update password", err.Error())
+		return
+	}
+
+	// Delete reset token after successful password reset
+	h.otpService.DeleteResetToken(ctx, req.Email)
+
+	log.Printf("SUCCESS: Password reset completed for email: %s", req.Email)
+
+	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Password has been reset successfully",
+	})
+}
+
 // sendJSONResponse sends a JSON response
 func (h *AuthHandler) sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
-	// CORS headers are already set in GoogleSignIn handler
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Printf("Failed to encode JSON response: %v", err)
+	} else {
+		log.Printf("JSON response sent successfully - Status: %d", statusCode)
 	}
 }
 
