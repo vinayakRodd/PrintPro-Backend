@@ -40,3 +40,6 @@ build-errors.log
 .env
 .env.local
 
+# Migration files
+migrations/001_create_tables.sql
+
