@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"print-pro-backend/internal/api"
 	"print-pro-backend/internal/config"
+	"print-pro-backend/internal/infrastructure"
+	"print-pro-backend/internal/middleware"
 	"print-pro-backend/internal/services"
+	"time"
 )
 
 func main() {
@@ -18,18 +21,35 @@ func main() {
 		log.Fatalf("Configuration error: %v", err)
 	}
 
+	// Initialize Redis client
+	redisClient, err := infrastructure.NewRedisClient(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+	if err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
+	defer redisClient.Close()
+	log.Printf("Connected to Redis at %s", cfg.RedisAddr)
+
 	// Initialize services
 	googleAuthService := services.NewGoogleAuthService(cfg)
+	sessionService := services.NewSessionService(redisClient)
+
+	// Initialize rate limiter (100 requests per minute)
+	rateLimiter := middleware.NewRateLimiter(redisClient, 100, time.Minute)
+
+	// Initialize auth middleware
+	authMiddlewareFunc := middleware.AuthMiddleware(sessionService)
 
 	// Initialize handlers
-	authHandler := api.NewAuthHandler(googleAuthService, cfg)
+	authHandler := api.NewAuthHandler(googleAuthService, sessionService, cfg)
 
-	// Register routes with CORS
+	// Register routes with CORS and rate limiting
 	http.HandleFunc("/", corsHandler(handler))
 	http.HandleFunc("/health", corsHandler(healthCheck))
 	http.HandleFunc("/ping", corsHandler(healthCheck))
-	http.HandleFunc("/api/auth/google/signin", corsHandler(authHandler.GoogleSignIn))
-	http.HandleFunc("/api/auth/logout", corsHandler(authHandler.Logout))
+	http.HandleFunc("/api/auth/google/signin", corsHandler(rateLimiter.LimitMiddleware(authHandler.GoogleSignIn)))
+	http.HandleFunc("/api/auth/logout", corsHandler(rateLimiter.LimitMiddleware(authHandler.Logout)))
+	// Protected route - requires authentication
+	http.HandleFunc("/api/auth/me", corsHandler(rateLimiter.LimitMiddleware(authMiddlewareFunc(authHandler.GetMe))))
 
 	port := ":" + cfg.Port
 	fmt.Printf("Server starting on port %s\n", port)

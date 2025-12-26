@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"print-pro-backend/internal/config"
+	"print-pro-backend/internal/middleware"
 	"print-pro-backend/internal/models"
 	"print-pro-backend/internal/services"
 )
@@ -12,13 +13,15 @@ import (
 // AuthHandler handles authentication-related requests
 type AuthHandler struct {
 	googleAuthService *services.GoogleAuthService
+	sessionService    *services.SessionService
 	config            *config.Config
 }
 
 // NewAuthHandler creates a new AuthHandler instance
-func NewAuthHandler(googleAuthService *services.GoogleAuthService, cfg *config.Config) *AuthHandler {
+func NewAuthHandler(googleAuthService *services.GoogleAuthService, sessionService *services.SessionService, cfg *config.Config) *AuthHandler {
 	return &AuthHandler{
 		googleAuthService: googleAuthService,
+		sessionService:    sessionService,
 		config:            cfg,
 	}
 }
@@ -66,6 +69,14 @@ func (h *AuthHandler) GoogleSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Store session in Redis
+	ctx := r.Context()
+	if err := h.sessionService.CreateSession(ctx, sessionToken, registeredUser); err != nil {
+		log.Printf("Failed to create session in Redis: %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to create session", err.Error())
+		return
+	}
+
 	// Set secure HTTP-only cookie for the session token
 	cookie := &http.Cookie{
 		Name:     "session_token",
@@ -104,8 +115,18 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get session token from cookie
+	cookie, err := r.Cookie("session_token")
+	if err == nil && cookie.Value != "" {
+		// Delete session from Redis
+		ctx := r.Context()
+		if err := h.sessionService.DeleteSession(ctx, cookie.Value); err != nil {
+			log.Printf("Failed to delete session from Redis: %v", err)
+		}
+	}
+
 	// Delete the session cookie by setting it with MaxAge: -1
-	cookie := &http.Cookie{
+	deleteCookie := &http.Cookie{
 		Name:     "session_token",
 		Value:    "",
 		Path:     "/",
@@ -117,10 +138,10 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	
 	// Set domain if configured
 	if h.config.CookieDomain != "" {
-		cookie.Domain = h.config.CookieDomain
+		deleteCookie.Domain = h.config.CookieDomain
 	}
 	
-	http.SetCookie(w, cookie)
+	http.SetCookie(w, deleteCookie)
 	log.Printf("Cookie deleted from browser")
 
 	// Send success response
@@ -129,6 +150,26 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		Message: "Logged out successfully",
 		User:    nil,
 		Token:   "",
+	}
+
+	h.sendJSONResponse(w, http.StatusOK, response)
+}
+
+// GetMe returns the current authenticated user
+func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	// Get user from context (set by auth middleware)
+	user, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not found in session")
+		return
+	}
+
+	// Return user information
+	response := models.GoogleSignInResponse{
+		Success: true,
+		Message: "User authenticated",
+		User:    user,
+		Token:   "", // Don't return token in /me endpoint
 	}
 
 	h.sendJSONResponse(w, http.StatusOK, response)
