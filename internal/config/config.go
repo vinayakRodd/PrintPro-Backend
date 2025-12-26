@@ -2,30 +2,46 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
+
+	"github.com/joho/godotenv"
 )
 
 // Config holds all configuration for the application
 type Config struct {
 	GoogleClientID string
 	Port           string
+	SecureCookies  bool   // Set to true in production with HTTPS
+	CookieDomain   string // Cookie domain (empty for localhost)
 }
 
 // LoadConfig loads configuration from environment variables
+// It first tries to load from .env file, then falls back to system environment variables
 func LoadConfig() *Config {
+	// Try to load .env file explicitly
+	if err := godotenv.Load(".env"); err != nil {
+		log.Printf("Warning: Failed to load .env file: %v", err)
+		log.Printf("Using system environment variables instead")
+	}
+
 	googleClientID := getEnv("GOOGLE_CLIENT_ID", "")
 	port := getEnv("PORT", "8080")
+	secureCookies := getEnv("SECURE_COOKIES", "false") == "true"
+	cookieDomain := getEnv("COOKIE_DOMAIN", "")
 	
 	return &Config{
 		GoogleClientID: googleClientID,
 		Port:           port,
+		SecureCookies:  secureCookies,
+		CookieDomain:   cookieDomain,
 	}
 }
 
 // Validate checks if required configuration is present
 func (c *Config) Validate() error {
 	if c.GoogleClientID == "" {
-		return fmt.Errorf("GOOGLE_CLIENT_ID environment variable is not set")
+		return fmt.Errorf("GOOGLE_CLIENT_ID environment variable is required for security")
 	}
 	return nil
 }

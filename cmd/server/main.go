@@ -17,24 +17,18 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
-	
-	// Log configuration loaded (mask client ID for security)
-	maskedClientID := maskString(cfg.GoogleClientID, 8)
-	fmt.Printf("Configuration loaded:\n")
-	fmt.Printf("  Google Client ID: %s\n", maskedClientID)
-	fmt.Printf("  Port: %s\n", cfg.Port)
 
 	// Initialize services
 	googleAuthService := services.NewGoogleAuthService(cfg)
 
 	// Initialize handlers
-	authHandler := api.NewAuthHandler(googleAuthService)
+	authHandler := api.NewAuthHandler(googleAuthService, cfg)
 
-	// Register routes
-	http.HandleFunc("/", handler)
-	http.HandleFunc("/health", healthCheck)
-	http.HandleFunc("/ping", healthCheck)
-	http.HandleFunc("/api/auth/google/signin", authHandler.GoogleSignIn)
+	// Register routes with CORS
+	http.HandleFunc("/", corsHandler(handler))
+	http.HandleFunc("/health", corsHandler(healthCheck))
+	http.HandleFunc("/ping", corsHandler(healthCheck))
+	http.HandleFunc("/api/auth/google/signin", corsHandler(authHandler.GoogleSignIn))
 
 	port := ":" + cfg.Port
 	fmt.Printf("Server starting on port %s\n", port)
@@ -53,11 +47,47 @@ func healthCheck(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"status": "ok", "message": "Server is responding", "endpoint": "%s"}`, r.URL.Path)
 }
 
-// maskString masks a string showing only first few characters
-func maskString(s string, visibleChars int) string {
-	if len(s) <= visibleChars {
-		return "***"
+// corsHandler adds CORS headers to responses
+func corsHandler(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get the origin from the request
+		origin := r.Header.Get("Origin")
+		
+		// Allow specific origins (for development, allow localhost:3000)
+		allowedOrigins := []string{
+			"http://localhost:3000",
+		}
+		
+		// Check if origin is allowed
+		allowed := false
+		for _, allowedOrigin := range allowedOrigins {
+			if origin == allowedOrigin {
+				allowed = true
+				break
+			}
+		}
+		
+		// If origin is allowed, set it; otherwise use the request origin if it's localhost
+		if allowed || (origin != "" && (origin == "http://localhost:3000" || origin == "http://localhost:3001")) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else if origin != "" {
+			// For other origins, you might want to restrict this in production
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
+		
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		// Handle preflight OPTIONS requests
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Call the next handler
+		next(w, r)
 	}
-	return s[:visibleChars] + "***"
 }
+
 

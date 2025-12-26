@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/models"
@@ -45,9 +46,19 @@ func (s *GoogleAuthService) VerifyGoogleToken(ctx context.Context, idToken strin
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("token verification failed: %s", string(body))
+		// Try to parse error from Google
+		var googleError struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		if err := json.Unmarshal(body, &googleError); err == nil {
+			return nil, fmt.Errorf("token verification failed: %s - %s", googleError.Error, googleError.ErrorDescription)
+		}
+		
+		return nil, fmt.Errorf("token verification failed")
 	}
 
 	var tokenInfo struct {
@@ -60,16 +71,20 @@ func (s *GoogleAuthService) VerifyGoogleToken(ctx context.Context, idToken strin
 		Picture       string `json:"picture"`
 		GivenName     string `json:"given_name"`
 		FamilyName    string `json:"family_name"`
+		Exp           string `json:"exp"` // Token expiration time (Unix timestamp)
+		Iat           string `json:"iat"` // Token issued at time (Unix timestamp)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&tokenInfo); err != nil {
+	if err := json.Unmarshal(body, &tokenInfo); err != nil {
 		return nil, fmt.Errorf("failed to decode token info: %w", err)
 	}
 
-	// Verify the audience (client ID) matches
-	if s.config.GoogleClientID != "" && tokenInfo.Aud != s.config.GoogleClientID {
-		return nil, fmt.Errorf("invalid token audience")
+	// Verify the audience (client ID) matches - REQUIRED for security
+	// This ensures tokens are only accepted from our specific application
+	if tokenInfo.Aud != s.config.GoogleClientID {
+		return nil, fmt.Errorf("invalid token audience: client ID mismatch")
 	}
+	log.Printf("Verified")
 
 	// Verify issuer
 	if tokenInfo.Iss != "https://accounts.google.com" && tokenInfo.Iss != "accounts.google.com" {
@@ -79,6 +94,16 @@ func (s *GoogleAuthService) VerifyGoogleToken(ctx context.Context, idToken strin
 	// Check if email is verified
 	if tokenInfo.EmailVerified != "true" {
 		return nil, fmt.Errorf("email not verified")
+	}
+
+	// Verify token expiration (security check)
+	if tokenInfo.Exp != "" {
+		expTime, err := parseUnixTimestamp(tokenInfo.Exp)
+		if err == nil {
+			if time.Now().After(expTime) {
+				return nil, fmt.Errorf("token has expired")
+			}
+		}
 	}
 
 	// Create user object
@@ -118,5 +143,14 @@ func (s *GoogleAuthService) GenerateSessionToken(userID string) (string, error) 
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+// parseUnixTimestamp parses a Unix timestamp string to time.Time
+func parseUnixTimestamp(ts string) (time.Time, error) {
+	var timestamp int64
+	if _, err := fmt.Sscanf(ts, "%d", &timestamp); err != nil {
+		return time.Time{}, err
+	}
+	return time.Unix(timestamp, 0), nil
 }
 
