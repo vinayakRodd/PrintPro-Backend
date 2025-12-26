@@ -14,6 +14,11 @@ type Config struct {
 	Port           string
 	SecureCookies  bool   // Set to true in production with HTTPS
 	CookieDomain   string // Cookie domain (empty for localhost)
+	
+	// Redis configuration
+	RedisAddr     string // Redis server address (e.g., localhost:6379)
+	RedisPassword string // Redis password (empty if no auth)
+	RedisDB       int    // Redis database number (default 0)
 }
 
 // LoadConfig loads configuration from environment variables
@@ -30,11 +35,22 @@ func LoadConfig() *Config {
 	secureCookies := getEnv("SECURE_COOKIES", "false") == "true"
 	cookieDomain := getEnv("COOKIE_DOMAIN", "")
 	
+	// Redis configuration
+	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
+	redisPassword := getEnv("REDIS_PASSWORD", "")
+	redisDB := 0
+	if dbStr := getEnv("REDIS_DB", "0"); dbStr != "" {
+		fmt.Sscanf(dbStr, "%d", &redisDB)
+	}
+	
 	return &Config{
 		GoogleClientID: googleClientID,
 		Port:           port,
 		SecureCookies:  secureCookies,
 		CookieDomain:   cookieDomain,
+		RedisAddr:      redisAddr,
+		RedisPassword:  redisPassword,
+		RedisDB:        redisDB,
 	}
 }
 
