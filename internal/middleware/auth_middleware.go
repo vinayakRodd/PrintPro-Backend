@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"print-pro-backend/internal/models"
 	"print-pro-backend/internal/services"
@@ -29,6 +30,8 @@ func AuthMiddleware(sessionService *services.SessionService) func(http.HandlerFu
 				w.Write([]byte(`{"success": false, "message": "Unauthorized", "error": "Invalid or expired session"}`))
 				return
 			}
+			
+			log.Printf("Session found in cache retrieved for user")
 
 			// Add user to request context for use in handlers
 			ctx = context.WithValue(ctx, "user", user)
