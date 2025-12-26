@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -29,6 +31,20 @@ func main() {
 	defer redisClient.Close()
 	log.Printf("Connected to Redis at %s", cfg.RedisAddr)
 
+	// Initialize PostgreSQL client
+	// Check if password is set (warn if empty, but allow it for some setups)
+	if cfg.PostgresPassword == "" {
+		log.Printf("Warning: POSTGRES_PASSWORD is not set. Using empty password.")
+	}
+	
+	postgresConnString := cfg.BuildPostgresConnString()
+	postgresClient, err := infrastructure.NewPostgresClient(postgresConnString)
+	if err != nil {
+		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
+	}
+	defer postgresClient.Close()
+	log.Printf("Connected to PostgreSQL database: %s", cfg.PostgresDB)
+
 	// Initialize services
 	googleAuthService := services.NewGoogleAuthService(cfg)
 	sessionService := services.NewSessionService(redisClient)
@@ -44,8 +60,8 @@ func main() {
 
 	// Register routes with CORS and rate limiting
 	http.HandleFunc("/", corsHandler(handler))
-	http.HandleFunc("/health", corsHandler(healthCheck))
-	http.HandleFunc("/ping", corsHandler(healthCheck))
+	http.HandleFunc("/health", corsHandler(createHealthCheck(redisClient, postgresClient)))
+	http.HandleFunc("/ping", corsHandler(createHealthCheck(redisClient, postgresClient)))
 	http.HandleFunc("/api/auth/google/signin", corsHandler(rateLimiter.LimitMiddleware(authHandler.GoogleSignIn)))
 	http.HandleFunc("/api/auth/logout", corsHandler(rateLimiter.LimitMiddleware(authHandler.Logout)))
 	// Protected route - requires authentication
@@ -62,10 +78,49 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"message": "Print Pro Backend API", "status": "running"}`)
 }
 
-func healthCheck(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status": "ok", "message": "Server is responding", "endpoint": "%s"}`, r.URL.Path)
+// createHealthCheck creates a health check handler with database connectivity checks
+func createHealthCheck(redisClient *infrastructure.RedisClient, postgresClient *infrastructure.PostgresClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		
+		healthStatus := map[string]interface{}{
+			"status":  "ok",
+			"message": "Server is responding",
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+		
+		// Check Redis connection
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		
+		redisStatus := "connected"
+		if err := redisClient.GetClient().Ping(ctx).Err(); err != nil {
+			redisStatus = "disconnected"
+			healthStatus["status"] = "degraded"
+		}
+		healthStatus["redis"] = map[string]interface{}{
+			"status": redisStatus,
+		}
+		
+		// Check PostgreSQL connection
+		postgresStatus := "connected"
+		if err := postgresClient.Ping(ctx); err != nil {
+			postgresStatus = "disconnected"
+			healthStatus["status"] = "degraded"
+		}
+		healthStatus["postgres"] = map[string]interface{}{
+			"status": postgresStatus,
+		}
+		
+		// Set HTTP status code
+		statusCode := http.StatusOK
+		if healthStatus["status"] == "degraded" {
+			statusCode = http.StatusServiceUnavailable
+		}
+		
+		w.WriteHeader(statusCode)
+		json.NewEncoder(w).Encode(healthStatus)
+	}
 }
 
 // corsHandler adds CORS headers to responses

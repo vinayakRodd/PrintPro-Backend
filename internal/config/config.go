@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -19,6 +20,14 @@ type Config struct {
 	RedisAddr     string // Redis server address (e.g., localhost:6379)
 	RedisPassword string // Redis password (empty if no auth)
 	RedisDB       int    // Redis database number (default 0)
+	
+	// PostgreSQL configuration
+	PostgresHost     string // PostgreSQL host (e.g., localhost)
+	PostgresPort     string // PostgreSQL port (e.g., 5432)
+	PostgresUser     string // PostgreSQL user (e.g., postgres)
+	PostgresPassword string // PostgreSQL password
+	PostgresDB       string // PostgreSQL database name (e.g., printer_db)
+	PostgresSSLMode  string // PostgreSQL SSL mode (e.g., disable)
 }
 
 // LoadConfig loads configuration from environment variables
@@ -43,6 +52,14 @@ func LoadConfig() *Config {
 		fmt.Sscanf(dbStr, "%d", &redisDB)
 	}
 	
+	// PostgreSQL configuration
+	postgresHost := getEnv("POSTGRES_HOST", "localhost")
+	postgresPort := getEnv("POSTGRES_PORT", "5432")
+	postgresUser := getEnv("POSTGRES_USER", "postgres")
+	postgresPassword := getEnv("POSTGRES_PASSWORD", "")
+	postgresDB := getEnv("POSTGRES_DB", "printer_db")
+	postgresSSLMode := getEnv("POSTGRES_SSLMODE", "disable")
+	
 	return &Config{
 		GoogleClientID: googleClientID,
 		Port:           port,
@@ -51,6 +68,12 @@ func LoadConfig() *Config {
 		RedisAddr:      redisAddr,
 		RedisPassword:  redisPassword,
 		RedisDB:        redisDB,
+		PostgresHost:     postgresHost,
+		PostgresPort:     postgresPort,
+		PostgresUser:     postgresUser,
+		PostgresPassword: postgresPassword,
+		PostgresDB:       postgresDB,
+		PostgresSSLMode:  postgresSSLMode,
 	}
 }
 
@@ -68,5 +91,23 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// BuildPostgresConnString builds a PostgreSQL connection string from config
+// Properly URL-encodes all components to handle special characters in passwords, usernames, etc.
+func (c *Config) BuildPostgresConnString() string {
+	// Use url.UserPassword to properly encode username and password
+	userInfo := url.UserPassword(c.PostgresUser, c.PostgresPassword)
+	
+	// Build URL structure
+	pgURL := &url.URL{
+		Scheme:   "postgres",
+		User:     userInfo,
+		Host:     fmt.Sprintf("%s:%s", c.PostgresHost, c.PostgresPort),
+		Path:     "/" + c.PostgresDB,
+		RawQuery: fmt.Sprintf("sslmode=%s", url.QueryEscape(c.PostgresSSLMode)),
+	}
+	
+	return pgURL.String()
 }
 
