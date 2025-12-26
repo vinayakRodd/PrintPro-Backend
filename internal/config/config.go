@@ -28,6 +28,13 @@ type Config struct {
 	PostgresPassword string // PostgreSQL password
 	PostgresDB       string // PostgreSQL database name (e.g., printer_db)
 	PostgresSSLMode  string // PostgreSQL SSL mode (e.g., disable)
+	
+	// Email configuration (Gmail SMTP)
+	SMTPHost     string // SMTP host (e.g., smtp.gmail.com)
+	SMTPPort     string // SMTP port (e.g., 587)
+	SMTPUsername string // Gmail address
+	SMTPPassword string // Gmail app password
+	FromEmail    string // From email address
 }
 
 // LoadConfig loads configuration from environment variables
@@ -60,6 +67,13 @@ func LoadConfig() *Config {
 	postgresDB := getEnv("POSTGRES_DB", "printer_db")
 	postgresSSLMode := getEnv("POSTGRES_SSLMODE", "disable")
 	
+	// Email configuration
+	smtpHost := getEnv("SMTP_HOST", "smtp.gmail.com")
+	smtpPort := getEnv("SMTP_PORT", "587")
+	smtpUsername := getEnv("SMTP_USERNAME", "")
+	smtpPassword := getEnv("SMTP_PASSWORD", "")
+	fromEmail := getEnv("FROM_EMAIL", "")
+	
 	return &Config{
 		GoogleClientID: googleClientID,
 		Port:           port,
@@ -74,6 +88,11 @@ func LoadConfig() *Config {
 		PostgresPassword: postgresPassword,
 		PostgresDB:       postgresDB,
 		PostgresSSLMode:  postgresSSLMode,
+		SMTPHost:         smtpHost,
+		SMTPPort:         smtpPort,
+		SMTPUsername:      smtpUsername,
+		SMTPPassword:      smtpPassword,
+		FromEmail:         fromEmail,
 	}
 }
 

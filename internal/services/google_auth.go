@@ -11,18 +11,21 @@ import (
 	"net/http"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/models"
+	"print-pro-backend/internal/repositories"
 	"time"
 )
 
 // GoogleAuthService handles Google authentication
 type GoogleAuthService struct {
-	config *config.Config
+	config         *config.Config
+	userRepository *repositories.UserRepository
 }
 
 // NewGoogleAuthService creates a new GoogleAuthService instance
-func NewGoogleAuthService(cfg *config.Config) *GoogleAuthService {
+func NewGoogleAuthService(cfg *config.Config, userRepo *repositories.UserRepository) *GoogleAuthService {
 	return &GoogleAuthService{
-		config: cfg,
+		config:         cfg,
+		userRepository: userRepo,
 	}
 }
 
@@ -121,21 +124,47 @@ func (s *GoogleAuthService) VerifyGoogleToken(ctx context.Context, idToken strin
 }
 
 // RegisterOrLoginUser registers a new user or returns existing user
-// In a real application, this would interact with a database
-func (s *GoogleAuthService) RegisterOrLoginUser(ctx context.Context, user *models.User) (*models.User, error) {
-	// TODO: Implement database logic here
-	// For now, we'll just return the user as if they were registered
-	// In production, you would:
-	// 1. Check if user exists by email or provider ID
-	// 2. If exists, update last login time
-	// 3. If not exists, create new user record
-	// 4. Return the user with database ID
-	
-	return user, nil
+// Checks if user exists by email, creates new user if not found
+func (s *GoogleAuthService) RegisterOrLoginUser(ctx context.Context, googleUser *models.User) (*models.User, error) {
+	// Check if user already exists by email
+	dbUser, err := s.userRepository.GetByEmail(ctx, googleUser.Email)
+	if err == nil {
+		// User exists - return existing user
+		// Convert database user to auth user model
+		return &models.User{
+			ID:        fmt.Sprintf("%d", dbUser.ID),
+			Email:     dbUser.Email,
+			Name:      dbUser.FullName,
+			Provider:  "google",
+			CreatedAt: dbUser.CreatedAt,
+			UpdatedAt: time.Now(),
+		}, nil
+	}
+
+	// User doesn't exist - create new user
+	// For Google OAuth users, we use a placeholder for password_hash since they authenticate via Google
+	// The password_hash field is NOT NULL, so we store "oauth_google" as a marker
+	// In production, you might want to add a provider field to track OAuth users separately
+	newUser, err := s.userRepository.Create(ctx, googleUser.Name, googleUser.Email, "oauth_google")
+	if err != nil {
+		return nil, fmt.Errorf("failed to register user: %w", err)
+	}
+
+	log.Printf("New user registered (ID: %d)", newUser.ID)
+
+	// Convert database user to auth user model
+	return &models.User{
+		ID:        fmt.Sprintf("%d", newUser.ID),
+		Email:     newUser.Email,
+		Name:      newUser.FullName,
+		Provider:  "google",
+		CreatedAt: newUser.CreatedAt,
+		UpdatedAt: time.Now(),
+	}, nil
 }
 
 // GenerateSessionToken generates a session token for the user
-// In production, use JWT or similar
+// Uses user ID (database ID) for session token generation
 func (s *GoogleAuthService) GenerateSessionToken(userID string) (string, error) {
 	// Simple token generation (in production, use JWT)
 	b := make([]byte, 32)
