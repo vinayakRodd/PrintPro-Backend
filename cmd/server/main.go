@@ -29,6 +29,7 @@ func main() {
 	http.HandleFunc("/health", corsHandler(healthCheck))
 	http.HandleFunc("/ping", corsHandler(healthCheck))
 	http.HandleFunc("/api/auth/google/signin", corsHandler(authHandler.GoogleSignIn))
+	http.HandleFunc("/api/auth/logout", corsHandler(authHandler.Logout))
 
 	port := ":" + cfg.Port
 	fmt.Printf("Server starting on port %s\n", port)
