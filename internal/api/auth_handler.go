@@ -24,25 +24,8 @@ func NewAuthHandler(googleAuthService *services.GoogleAuthService, cfg *config.C
 }
 
 // GoogleSignIn handles Google Sign-In requests
+// CORS is handled by corsHandler middleware in main.go
 func (h *AuthHandler) GoogleSignIn(w http.ResponseWriter, r *http.Request) {
-	// Set CORS headers with specific origin (required when credentials are used)
-	origin := r.Header.Get("Origin")
-	if origin == "http://localhost:3000" || origin == "http://localhost:3001" || origin == "http://127.0.0.1:3000" {
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-	} else if origin != "" {
-		// Allow the origin from the request (for development)
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-	}
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-	w.Header().Set("Access-Control-Allow-Credentials", "true")
-	
-	// Handle preflight OPTIONS request
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	
 	// Only allow POST requests
 	if r.Method != http.MethodPost {
 		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only POST method is allowed")
@@ -108,6 +91,44 @@ func (h *AuthHandler) GoogleSignIn(w http.ResponseWriter, r *http.Request) {
 		Message: "User authenticated successfully",
 		User:    registeredUser,
 		Token:   sessionToken, // Still include in response if frontend needs it
+	}
+
+	h.sendJSONResponse(w, http.StatusOK, response)
+}
+
+// Logout handles user logout by deleting the session cookie
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	// Only allow POST requests
+	if r.Method != http.MethodPost {
+		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only POST method is allowed")
+		return
+	}
+
+	// Delete the session cookie by setting it with MaxAge: -1
+	cookie := &http.Cookie{
+		Name:     "session_token",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1, // Delete the cookie
+		HttpOnly: true,
+		Secure:   h.config.SecureCookies,
+		SameSite: http.SameSiteLaxMode,
+	}
+	
+	// Set domain if configured
+	if h.config.CookieDomain != "" {
+		cookie.Domain = h.config.CookieDomain
+	}
+	
+	http.SetCookie(w, cookie)
+	log.Printf("Cookie deleted from browser")
+
+	// Send success response
+	response := models.GoogleSignInResponse{
+		Success: true,
+		Message: "Logged out successfully",
+		User:    nil,
+		Token:   "",
 	}
 
 	h.sendJSONResponse(w, http.StatusOK, response)
