@@ -52,12 +52,10 @@ Print Pro Team
 // sendEmail sends an email using SMTP
 func (s *EmailService) sendEmail(to, subject, body string) error {
 	log.Printf("Preparing to send email")
-	log.Printf("SMTP Config Check - Host: %s, Port: %s, Username set: %v, Password set: %v", 
-		s.config.SMTPHost, s.config.SMTPPort, s.config.SMTPUsername != "", s.config.SMTPPassword != "")
 	
 	// Validate configuration
 	if s.config.SMTPUsername == "" || s.config.SMTPPassword == "" {
-		log.Printf("SMTP credentials not configured - Username: '%s', Password: '%s'", s.config.SMTPUsername, s.config.SMTPPassword)
+		log.Printf("SMTP credentials not configured")
 		return fmt.Errorf("SMTP credentials not configured")
 	}
 
@@ -90,9 +88,7 @@ func (s *EmailService) sendEmail(to, subject, body string) error {
 		body + "\r\n")
 
 	log.Printf("Connecting to SMTP server: %s:%s", s.config.SMTPHost, s.config.SMTPPort)
-	log.Printf("SMTP Username: %s", s.config.SMTPUsername)
-	log.Printf("From email: %s", from)
-	log.Printf("To email: %s", to)
+	log.Printf("Sending email")
 	
 	// Send email with explicit STARTTLS for Gmail (port 587)
 	addr := fmt.Sprintf("%s:%s", s.config.SMTPHost, s.config.SMTPPort)
