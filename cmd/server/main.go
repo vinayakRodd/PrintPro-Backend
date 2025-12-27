@@ -54,15 +54,16 @@ func main() {
 	sessionService := services.NewSessionService(redisClient)
 	emailService := services.NewEmailService(cfg)
 	otpService := services.NewOTPService(redisClient)
+	jwtService := services.NewJWTService(cfg.JWTSecret)
 
 	// Initialize rate limiter (100 requests per minute)
 	rateLimiter := middleware.NewRateLimiter(redisClient, 100, time.Minute)
 
 	// Initialize auth middleware
-	authMiddlewareFunc := middleware.AuthMiddleware(sessionService)
+	authMiddlewareFunc := middleware.AuthMiddleware(sessionService, jwtService)
 
 	// Initialize handlers
-	authHandler := api.NewAuthHandler(googleAuthService, sessionService, emailService, otpService, userRepository, redisClient, cfg)
+	authHandler := api.NewAuthHandler(googleAuthService, sessionService, emailService, otpService, userRepository, redisClient, jwtService, cfg)
 
 	// Register routes with CORS and rate limiting
 	// Register specific routes BEFORE the root handler
@@ -77,6 +78,7 @@ func main() {
 	http.HandleFunc("/api/auth/otp/verify", corsHandler(rateLimiter.LimitMiddleware(authHandler.VerifyOTP))) // OTP verification only
 	http.HandleFunc("/api/auth/reset-password", corsHandler(rateLimiter.LimitMiddleware(authHandler.ResetPassword)))
 	http.HandleFunc("/api/auth/password/reset", corsHandler(rateLimiter.LimitMiddleware(authHandler.ResetPassword))) // Alias for frontend
+	http.HandleFunc("/api/auth/refresh", corsHandler(rateLimiter.LimitMiddleware(authHandler.RefreshToken))) // Refresh access token
 	// Protected routes - require authentication
 	http.HandleFunc("/api/auth/me", corsHandler(rateLimiter.LimitMiddleware(authMiddlewareFunc(authHandler.GetMe))))
 	// GetEmail can work with or without auth (supports forgot password flow with OTP verification)

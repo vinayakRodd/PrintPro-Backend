@@ -35,6 +35,9 @@ type Config struct {
 	SMTPUsername string // Gmail address
 	SMTPPassword string // Gmail app password
 	FromEmail    string // From email address
+	
+	// JWT configuration
+	JWTSecret string // JWT secret key for signing tokens
 }
 
 // LoadConfig loads configuration from environment variables
@@ -74,6 +77,15 @@ func LoadConfig() *Config {
 	smtpPassword := getEnv("SMTP_PASSWORD", "")
 	fromEmail := getEnv("FROM_EMAIL", "")
 	
+	// JWT configuration
+	jwtSecret := getEnv("JWT_SECRET", "")
+	if jwtSecret == "" {
+		// Generate a random secret if not provided (for development only)
+		// In production, always set JWT_SECRET in environment
+		log.Printf("Warning: JWT_SECRET not set. Using default (INSECURE - only for development)")
+		jwtSecret = "your-secret-key-change-in-production-min-32-chars"
+	}
+	
 	return &Config{
 		GoogleClientID: googleClientID,
 		Port:           port,
@@ -93,6 +105,7 @@ func LoadConfig() *Config {
 		SMTPUsername:      smtpUsername,
 		SMTPPassword:      smtpPassword,
 		FromEmail:         fromEmail,
+		JWTSecret:         jwtSecret,
 	}
 }
 
