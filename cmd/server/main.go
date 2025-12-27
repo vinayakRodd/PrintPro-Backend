@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"print-pro-backend/internal/api"
+	"print-pro-backend/internal/api/handlers/auth"
+	"print-pro-backend/internal/api/routes"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
 	"print-pro-backend/internal/middleware"
@@ -63,28 +64,19 @@ func main() {
 	authMiddlewareFunc := middleware.AuthMiddleware(sessionService, jwtService)
 
 	// Initialize handlers
-	authHandler := api.NewAuthHandler(googleAuthService, sessionService, emailService, otpService, userRepository, redisClient, jwtService, cfg)
+	authHandler := auth.NewAuthHandler(googleAuthService, sessionService, emailService, otpService, userRepository, redisClient, jwtService, cfg)
 
-	// Register routes with CORS and rate limiting
-	// Register specific routes BEFORE the root handler
-	http.HandleFunc("/health", corsHandler(createHealthCheck(redisClient, postgresClient)))
-	http.HandleFunc("/ping", corsHandler(createHealthCheck(redisClient, postgresClient)))
-	http.HandleFunc("/api/auth/register", corsHandler(rateLimiter.LimitMiddleware(authHandler.Register)))
-	http.HandleFunc("/api/auth/login", corsHandler(rateLimiter.LimitMiddleware(authHandler.Login)))
-	http.HandleFunc("/api/auth/google/signin", corsHandler(rateLimiter.LimitMiddleware(authHandler.GoogleSignIn)))
-	http.HandleFunc("/api/auth/logout", corsHandler(rateLimiter.LimitMiddleware(authHandler.Logout)))
-	http.HandleFunc("/api/auth/forgot-password", corsHandler(rateLimiter.LimitMiddleware(authHandler.ForgotPassword)))
-	http.HandleFunc("/api/auth/otp/generate", corsHandler(rateLimiter.LimitMiddleware(authHandler.ForgotPassword))) // Alias for frontend
-	http.HandleFunc("/api/auth/otp/verify", corsHandler(rateLimiter.LimitMiddleware(authHandler.VerifyOTP))) // OTP verification only
-	http.HandleFunc("/api/auth/reset-password", corsHandler(rateLimiter.LimitMiddleware(authHandler.ResetPassword)))
-	http.HandleFunc("/api/auth/password/reset", corsHandler(rateLimiter.LimitMiddleware(authHandler.ResetPassword))) // Alias for frontend
-	http.HandleFunc("/api/auth/refresh", corsHandler(rateLimiter.LimitMiddleware(authHandler.RefreshToken))) // Refresh access token
-	// Protected routes - require authentication
-	http.HandleFunc("/api/auth/me", corsHandler(rateLimiter.LimitMiddleware(authMiddlewareFunc(authHandler.GetMe))))
-	// GetEmail can work with or without auth (supports forgot password flow with OTP verification)
-	http.HandleFunc("/api/auth/email", corsHandler(rateLimiter.LimitMiddleware(authHandler.GetEmail)))
-	// Root handler should be last
-	http.HandleFunc("/", corsHandler(handler))
+	// Register all routes (auth routes are registered in internal/api/routes)
+	routes.RegisterRoutes(
+		authHandler,
+		rateLimiter,
+		authMiddlewareFunc,
+		corsHandler,
+		redisClient,
+		postgresClient,
+		createHealthCheck,
+		handler,
+	)
 
 	port := ":" + cfg.Port
 	fmt.Printf("Server starting on port %s\n", port)
