@@ -1,4 +1,4 @@
-package services
+package google_auth
 
 import (
 	"context"

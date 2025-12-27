@@ -1,4 +1,4 @@
-package services
+package session
 
 import (
 	"context"

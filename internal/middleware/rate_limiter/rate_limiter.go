@@ -1,11 +1,11 @@
-package middleware
+package rate_limiter
 
 import (
 	"fmt"
 	"net/http"
-	"print-pro-backend/internal/infrastructure"
 	"strconv"
 	"time"
+	"print-pro-backend/internal/infrastructure"
 )
 
 // RateLimiter handles rate limiting using Redis

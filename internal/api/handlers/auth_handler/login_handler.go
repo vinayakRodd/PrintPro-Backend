@@ -1,4 +1,4 @@
-package auth
+package auth_handler
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"print-pro-backend/internal/middleware"
+	"print-pro-backend/internal/middleware/auth_middleware"
 	"print-pro-backend/internal/models"
 
 	"golang.org/x/crypto/bcrypt"
@@ -378,7 +378,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // GetMe returns the current authenticated user
 func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	// Get user from context (set by auth middleware)
-	user, ok := middleware.GetUserFromContext(r)
+	user, ok := auth_middleware.GetUserFromContext(r)
 	if !ok {
 		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not found in session")
 		return

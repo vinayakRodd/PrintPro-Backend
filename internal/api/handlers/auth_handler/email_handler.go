@@ -1,18 +1,18 @@
-package auth
+package auth_handler
 
 import (
 	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
-	"print-pro-backend/internal/middleware"
+	"print-pro-backend/internal/middleware/auth_middleware"
 )
 
 // GetEmail returns the email of the current authenticated user
 // OR returns email if user exists and has verified OTP (for forgot password flow)
 func (h *AuthHandler) GetEmail(w http.ResponseWriter, r *http.Request) {
 	// First, try to get user from authenticated session
-	user, ok := middleware.GetUserFromContext(r)
+	user, ok := auth_middleware.GetUserFromContext(r)
 	if ok {
 		// User is authenticated - return their email (works with GET or POST)
 		h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{

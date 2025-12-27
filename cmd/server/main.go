@@ -1,89 +1,164 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"print-pro-backend/internal/api/handlers/auth"
+	"print-pro-backend/internal/api/handlers/auth_handler"
+	"print-pro-backend/internal/api/handlers/health"
 	"print-pro-backend/internal/api/routes"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
-	"print-pro-backend/internal/middleware"
+	"print-pro-backend/internal/middleware/auth_middleware"
+	"print-pro-backend/internal/middleware/cors"
+	"print-pro-backend/internal/middleware/rate_limiter"
 	"print-pro-backend/internal/repositories"
-	"print-pro-backend/internal/services"
+	"print-pro-backend/internal/services/email"
+	"print-pro-backend/internal/services/google_auth"
+	"print-pro-backend/internal/services/jwt"
+	"print-pro-backend/internal/services/otp"
+	"print-pro-backend/internal/services/session"
 	"time"
 )
 
 func main() {
-	// Load configuration from environment variables
+	// Setup application components
+	cfg := setupConfig()
+	redisClient := setupRedis(cfg)
+	defer func() {
+		if err := redisClient.Close(); err != nil {
+			log.Printf("Failed to close Redis client: %v", err)
+		}
+	}()
+
+	postgresClient := setupDatabase(cfg)
+	defer func() {
+		postgresClient.Close()
+	}()
+
+	// Initialize application services and handlers
+	app := setupApplication(cfg, redisClient, postgresClient)
+
+	// Register all routes
+	setupRoutes(app, redisClient, postgresClient)
+
+	// Start server
+	startServer(cfg)
+}
+
+// setupConfig loads and validates application configuration.
+func setupConfig() *config.Config {
 	cfg := config.LoadConfig()
-	
-	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
+	return cfg
+}
 
-	// Initialize Redis client
+// setupRedis initializes Redis connection.
+func setupRedis(cfg *config.Config) *infrastructure.RedisClient {
 	redisClient, err := infrastructure.NewRedisClient(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
-	defer redisClient.Close()
 	log.Printf("Connected to Redis at %s", cfg.RedisAddr)
+	return redisClient
+}
 
-	// Initialize PostgreSQL client
+// setupDatabase initializes PostgreSQL connection.
+func setupDatabase(cfg *config.Config) *infrastructure.PostgresClient {
 	// Check if password is set (warn if empty, but allow it for some setups)
 	if cfg.PostgresPassword == "" {
 		log.Printf("Warning: POSTGRES_PASSWORD is not set. Using empty password.")
 	}
-	
+
 	postgresConnString := cfg.BuildPostgresConnString()
 	postgresClient, err := infrastructure.NewPostgresClient(postgresConnString)
 	if err != nil {
 		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
 	}
-	defer postgresClient.Close()
 	log.Printf("Connected to PostgreSQL database: %s", cfg.PostgresDB)
+	return postgresClient
+}
 
+// Application holds all application dependencies
+type Application struct {
+	cfg                *config.Config
+	redisClient        *infrastructure.RedisClient
+	postgresClient     *infrastructure.PostgresClient
+	userRepository     *repositories.UserRepository
+	googleAuthService  *google_auth.GoogleAuthService
+	sessionService     *session.SessionService
+	emailService       *email.EmailService
+	otpService         *otp.OTPService
+	jwtService         *jwt.JWTService
+	rateLimiter        *rate_limiter.RateLimiter
+	authMiddlewareFunc func(http.HandlerFunc) http.HandlerFunc
+	authHandler        *auth_handler.AuthHandler
+}
+
+// setupApplication initializes all application services, repositories, and handlers.
+func setupApplication(cfg *config.Config, redisClient *infrastructure.RedisClient, postgresClient *infrastructure.PostgresClient) *Application {
 	// Initialize repositories
 	userRepository := repositories.NewUserRepository(postgresClient.GetPool())
 
 	// Initialize services
-	googleAuthService := services.NewGoogleAuthService(cfg, userRepository)
-	sessionService := services.NewSessionService(redisClient)
-	emailService := services.NewEmailService(cfg)
-	otpService := services.NewOTPService(redisClient)
-	jwtService := services.NewJWTService(cfg.JWTSecret)
+	googleAuthService := google_auth.NewGoogleAuthService(cfg, userRepository)
+	sessionService := session.NewSessionService(redisClient)
+	emailService := email.NewEmailService(cfg)
+	otpService := otp.NewOTPService(redisClient)
+	jwtService := jwt.NewJWTService(cfg.JWTSecret)
 
 	// Initialize rate limiter (100 requests per minute)
-	rateLimiter := middleware.NewRateLimiter(redisClient, 100, time.Minute)
+	rateLimiter := rate_limiter.NewRateLimiter(redisClient, 100, time.Minute)
 
 	// Initialize auth middleware
-	authMiddlewareFunc := middleware.AuthMiddleware(sessionService, jwtService)
+	authMiddlewareFunc := auth_middleware.AuthMiddleware(sessionService, jwtService)
 
 	// Initialize handlers
-	authHandler := auth.NewAuthHandler(googleAuthService, sessionService, emailService, otpService, userRepository, redisClient, jwtService, cfg)
+	authHandler := auth_handler.NewAuthHandler(googleAuthService, sessionService, emailService, otpService, userRepository, redisClient, jwtService, cfg)
 
-	// Register all routes (auth routes are registered in internal/api/routes)
+	return &Application{
+		cfg:                cfg,
+		redisClient:        redisClient,
+		postgresClient:     postgresClient,
+		userRepository:     userRepository,
+		googleAuthService:  googleAuthService,
+		sessionService:     sessionService,
+		emailService:       emailService,
+		otpService:         otpService,
+		jwtService:         jwtService,
+		rateLimiter:        rateLimiter,
+		authMiddlewareFunc: authMiddlewareFunc,
+		authHandler:        authHandler,
+	}
+}
+
+// setupRoutes registers all application routes.
+func setupRoutes(app *Application, redisClient *infrastructure.RedisClient, postgresClient *infrastructure.PostgresClient) {
 	routes.RegisterRoutes(
-		authHandler,
-		rateLimiter,
-		authMiddlewareFunc,
-		corsHandler,
+		app.authHandler,
+		app.rateLimiter,
+		app.authMiddlewareFunc,
+		cors.CORS,
 		redisClient,
 		postgresClient,
-		createHealthCheck,
+		health.CreateHealthCheck,
 		handler,
 	)
+}
 
+// startServer starts the HTTP server.
+func startServer(cfg *config.Config) {
 	port := ":" + cfg.Port
 	fmt.Printf("Server starting on port %s\n", port)
 	fmt.Printf("Google Sign-In endpoint: http://localhost%s/api/auth/google/signin\n", port)
-	log.Fatal(http.ListenAndServe(port, nil))
+	if err := http.ListenAndServe(port, nil); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }
 
+// handler handles root path requests
 func handler(w http.ResponseWriter, r *http.Request) {
 	// Only handle root path, not API routes
 	if r.URL.Path != "/" {
@@ -97,93 +172,4 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"message": "Print Pro Backend API", "status": "running"}`)
 }
-
-// createHealthCheck creates a health check handler with database connectivity checks
-func createHealthCheck(redisClient *infrastructure.RedisClient, postgresClient *infrastructure.PostgresClient) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		
-		healthStatus := map[string]interface{}{
-			"status":  "ok",
-			"message": "Server is responding",
-			"timestamp": time.Now().Format(time.RFC3339),
-		}
-		
-		// Check Redis connection
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		
-		redisStatus := "connected"
-		if err := redisClient.GetClient().Ping(ctx).Err(); err != nil {
-			redisStatus = "disconnected"
-			healthStatus["status"] = "degraded"
-		}
-		healthStatus["redis"] = map[string]interface{}{
-			"status": redisStatus,
-		}
-		
-		// Check PostgreSQL connection
-		postgresStatus := "connected"
-		if err := postgresClient.Ping(ctx); err != nil {
-			postgresStatus = "disconnected"
-			healthStatus["status"] = "degraded"
-		}
-		healthStatus["postgres"] = map[string]interface{}{
-			"status": postgresStatus,
-		}
-		
-		// Set HTTP status code
-		statusCode := http.StatusOK
-		if healthStatus["status"] == "degraded" {
-			statusCode = http.StatusServiceUnavailable
-		}
-		
-		w.WriteHeader(statusCode)
-		json.NewEncoder(w).Encode(healthStatus)
-	}
-}
-
-// corsHandler adds CORS headers to responses
-func corsHandler(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Get the origin from the request
-		origin := r.Header.Get("Origin")
-		
-		// Allow specific origins (for development, allow localhost:3000)
-		allowedOrigins := []string{
-			"http://localhost:3000",
-		}
-		
-		// Check if origin is allowed
-		allowed := false
-		for _, allowedOrigin := range allowedOrigins {
-			if origin == allowedOrigin {
-				allowed = true
-				break
-			}
-		}
-		
-		// If origin is allowed, set it; otherwise use the request origin if it's localhost
-		if allowed || (origin != "" && (origin == "http://localhost:3000" || origin == "http://localhost:3001")) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-		} else if origin != "" {
-			// For other origins, you might want to restrict this in production
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-		}
-		
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-
-		// Handle preflight OPTIONS requests
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// Call the next handler
-		next(w, r)
-	}
-}
-
 
