@@ -52,3 +52,9 @@ type RegisterRequest struct {
 	Password string `json:"password"`   // Required: user's password (min 6 characters)
 }
 
+// LoginRequest represents the request to login with email and password
+type LoginRequest struct {
+	Email    string `json:"email"`    // Required: user's email address
+	Password string `json:"password"`  // Required: user's password
+}
+
