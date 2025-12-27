@@ -1,4 +1,4 @@
-package services
+package jwt
 
 import (
 	"errors"
@@ -30,6 +30,16 @@ func NewJWTService(secretKey string) *JWTService {
 		accessTTL:  15 * time.Minute,  // Access token expires in 15 minutes (industry standard)
 		refreshTTL: 7 * 24 * time.Hour, // Refresh token expires in 7 days
 	}
+}
+
+// GetAccessTTL returns the access token TTL
+func (s *JWTService) GetAccessTTL() time.Duration {
+	return s.accessTTL
+}
+
+// GetRefreshTTL returns the refresh token TTL
+func (s *JWTService) GetRefreshTTL() time.Duration {
+	return s.refreshTTL
 }
 
 // GenerateAccessToken generates a JWT access token

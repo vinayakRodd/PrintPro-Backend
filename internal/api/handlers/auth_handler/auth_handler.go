@@ -1,33 +1,37 @@
-package auth
+package auth_handler
 
 import (
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
 	"print-pro-backend/internal/repositories"
-	"print-pro-backend/internal/services"
+	"print-pro-backend/internal/services/email"
+	"print-pro-backend/internal/services/google_auth"
+	"print-pro-backend/internal/services/jwt"
+	"print-pro-backend/internal/services/otp"
+	"print-pro-backend/internal/services/session"
 )
 
 // AuthHandler handles authentication-related requests
 type AuthHandler struct {
-	googleAuthService *services.GoogleAuthService
-	sessionService    *services.SessionService
-	emailService      *services.EmailService
-	otpService        *services.OTPService
+	googleAuthService *google_auth.GoogleAuthService
+	sessionService    *session.SessionService
+	emailService      *email.EmailService
+	otpService        *otp.OTPService
 	userRepository    *repositories.UserRepository
 	redisClient       *infrastructure.RedisClient
-	jwtService        *services.JWTService
+	jwtService        *jwt.JWTService
 	config            *config.Config
 }
 
 // NewAuthHandler creates a new AuthHandler instance
 func NewAuthHandler(
-	googleAuthService *services.GoogleAuthService,
-	sessionService *services.SessionService,
-	emailService *services.EmailService,
-	otpService *services.OTPService,
+	googleAuthService *google_auth.GoogleAuthService,
+	sessionService *session.SessionService,
+	emailService *email.EmailService,
+	otpService *otp.OTPService,
 	userRepository *repositories.UserRepository,
 	redisClient *infrastructure.RedisClient,
-	jwtService *services.JWTService,
+	jwtService *jwt.JWTService,
 	cfg *config.Config,
 ) *AuthHandler {
 	return &AuthHandler{

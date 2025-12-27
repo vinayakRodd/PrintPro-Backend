@@ -1,4 +1,4 @@
-package middleware
+package auth_middleware
 
 import (
 	"context"
@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"strings"
 	"print-pro-backend/internal/models"
-	"print-pro-backend/internal/services"
+	"print-pro-backend/internal/services/jwt"
+	"print-pro-backend/internal/services/session"
 )
 
 // AuthMiddleware verifies the user's JWT access token from Authorization header
-func AuthMiddleware(sessionService *services.SessionService, jwtService *services.JWTService) func(http.HandlerFunc) http.HandlerFunc {
+func AuthMiddleware(sessionService *session.SessionService, jwtService *jwt.JWTService) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			// Get access token from Authorization header
@@ -53,17 +54,17 @@ func AuthMiddleware(sessionService *services.SessionService, jwtService *service
 				Email: claims.Email,
 			}
 
-			// Add user to request context for use in handlers
+			// Attach user to request context
 			ctx := context.WithValue(r.Context(), "user", user)
 			r = r.WithContext(ctx)
 
-			// Continue to next handler
+			// Call the next handler
 			next(w, r)
 		}
 	}
 }
 
-// GetUserFromContext extracts the user from request context
+// GetUserFromContext retrieves the user from the request context
 func GetUserFromContext(r *http.Request) (*models.User, bool) {
 	user, ok := r.Context().Value("user").(*models.User)
 	return user, ok

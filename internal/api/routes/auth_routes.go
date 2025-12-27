@@ -2,14 +2,14 @@ package routes
 
 import (
 	"net/http"
-	"print-pro-backend/internal/api/handlers/auth"
-	"print-pro-backend/internal/middleware"
+	"print-pro-backend/internal/api/handlers/auth_handler"
+	"print-pro-backend/internal/middleware/rate_limiter"
 )
 
 // RegisterAuthRoutes registers all authentication-related routes
 func RegisterAuthRoutes(
-	authHandler *auth.AuthHandler,
-	rateLimiter *middleware.RateLimiter,
+	authHandler *auth_handler.AuthHandler,
+	rateLimiter *rate_limiter.RateLimiter,
 	authMiddlewareFunc func(http.HandlerFunc) http.HandlerFunc,
 	corsHandler func(http.HandlerFunc) http.HandlerFunc,
 ) {
