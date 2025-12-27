@@ -774,18 +774,38 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("SUCCESS: Password reset completed")
 
+	// Return email in response so frontend doesn't need to call GetEmail
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"message": "Password has been reset successfully",
+		"email":   email, // Include email so frontend doesn't need to call GetEmail
 	})
 }
 
 // sendJSONResponse sends a JSON response
 func (h *AuthHandler) sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	
+	// Encode JSON first to check for errors before writing header
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	if err := encoder.Encode(data); err != nil {
+		log.Printf("ERROR: Failed to encode JSON response - Status: %d, Error: %v", statusCode, err)
+		// If encoding fails, send error response
+		w.WriteHeader(http.StatusInternalServerError)
+		errorResponse := models.ErrorResponse{
+			Success: false,
+			Message: "Failed to encode response",
+			Error:   err.Error(),
+		}
+		json.NewEncoder(w).Encode(errorResponse)
+		return
+	}
+	
+	// If encoding succeeded, write header and send response
 	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("Failed to encode JSON response: %v", err)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		log.Printf("ERROR: Failed to write JSON response - Status: %d, Error: %v", statusCode, err)
 	} else {
 		log.Printf("JSON response sent successfully - Status: %d", statusCode)
 	}
