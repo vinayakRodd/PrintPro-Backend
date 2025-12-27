@@ -600,19 +600,22 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("OTP generated successfully")
 
-	log.Printf("Sending OTP via email")
-	// Send OTP via email (always send, even if user doesn't exist)
-	err = h.emailService.SendOTPEmail(email, otp)
-	if err != nil {
-		log.Printf("ERROR: Failed to send OTP email: %v", err)
-		// Return error response with details
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to send OTP email", err.Error())
-		return
-	}
+	// Send OTP via email asynchronously (in background goroutine)
+	// This allows us to return success immediately without waiting for SMTP
+	go func(emailAddr, otpCode string) {
+		log.Printf("Sending OTP via email (async)")
+		if err := h.emailService.SendOTPEmail(emailAddr, otpCode); err != nil {
+			log.Printf("ERROR: Failed to send OTP email asynchronously - Email: %s, Error: %v", emailAddr, err)
+			// Note: We don't fail the request here since OTP is already stored in Redis
+			// The user can still verify the OTP even if email fails (though unlikely)
+		} else {
+			log.Printf("SUCCESS: OTP email sent successfully (async)")
+		}
+	}(email, otp)
 
-	log.Printf("SUCCESS: OTP sent successfully")
+	log.Printf("OTP generated and email sending initiated (async)")
 
-	// Return success response
+	// Return success response immediately (don't wait for email)
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"message": "OTP sent successfully",
