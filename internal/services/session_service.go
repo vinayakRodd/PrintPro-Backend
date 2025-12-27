@@ -71,6 +71,28 @@ func (s *SessionService) DeleteSession(ctx context.Context, token string) error 
 	return s.redisClient.Delete(ctx, sessionKey)
 }
 
+// StoreRefreshToken stores a refresh token in Redis
+func (s *SessionService) StoreRefreshToken(ctx context.Context, refreshToken, userID string) error {
+	refreshKey := fmt.Sprintf("refresh_token:%s", refreshToken)
+	return s.redisClient.Set(ctx, refreshKey, userID, s.sessionTTL)
+}
+
+// ValidateRefreshToken checks if a refresh token exists in Redis
+func (s *SessionService) ValidateRefreshToken(ctx context.Context, refreshToken string) (string, error) {
+	refreshKey := fmt.Sprintf("refresh_token:%s", refreshToken)
+	userID, err := s.redisClient.Get(ctx, refreshKey)
+	if err != nil {
+		return "", fmt.Errorf("refresh token not found or expired")
+	}
+	return userID, nil
+}
+
+// DeleteRefreshToken removes a refresh token from Redis
+func (s *SessionService) DeleteRefreshToken(ctx context.Context, refreshToken string) error {
+	refreshKey := fmt.Sprintf("refresh_token:%s", refreshToken)
+	return s.redisClient.Delete(ctx, refreshKey)
+}
+
 // RefreshSession extends the session TTL
 func (s *SessionService) RefreshSession(ctx context.Context, token string) error {
 	sessionKey := fmt.Sprintf("session:%s", token)

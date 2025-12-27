@@ -29,11 +29,11 @@ func (s *OTPService) GenerateOTP(ctx context.Context, email string) (string, err
 	log.Printf("Generating 6-digit OTP")
 	// Generate 6-digit OTP
 	otp := generateRandomOTP(6)
-	log.Printf("OTP generated: %s", otp)
+	log.Printf("OTP generated successfully")
 	
 	// Store OTP in Redis with email as key
 	otpKey := fmt.Sprintf("otp:%s", email)
-	log.Printf("Storing OTP in Redis with key: %s", otpKey)
+	log.Printf("Storing OTP in Redis")
 	err := s.redisClient.Set(ctx, otpKey, otp, s.otpTTL)
 	if err != nil {
 		log.Printf("Failed to store OTP in Redis: %v", err)
@@ -54,7 +54,7 @@ func (s *OTPService) VerifyOTP(ctx context.Context, email, otp string) (bool, er
 	
 	storedOTP, err := s.redisClient.Get(ctx, otpKey)
 	if err != nil {
-		log.Printf("OTP not found in Redis for key: %s", otpKey)
+		log.Printf("OTP not found in Redis or expired")
 		return false, fmt.Errorf("OTP not found or expired")
 	}
 	
@@ -64,7 +64,7 @@ func (s *OTPService) VerifyOTP(ctx context.Context, email, otp string) (bool, er
 	log.Printf("Comparing OTP - Provided length: %d, Stored length: %d", len(otp), len(storedOTP))
 	
 	if storedOTP != otp {
-		log.Printf("OTP mismatch - Provided: '%s', Stored: '%s'", otp, storedOTP)
+		log.Printf("OTP mismatch - Invalid OTP provided")
 		return false, fmt.Errorf("invalid OTP")
 	}
 	

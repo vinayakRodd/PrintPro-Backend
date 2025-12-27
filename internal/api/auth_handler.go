@@ -29,6 +29,7 @@ type AuthHandler struct {
 	otpService        *services.OTPService
 	userRepository    *repositories.UserRepository
 	redisClient       *infrastructure.RedisClient
+	jwtService        *services.JWTService
 	config            *config.Config
 }
 
@@ -40,6 +41,7 @@ func NewAuthHandler(
 	otpService *services.OTPService,
 	userRepository *repositories.UserRepository,
 	redisClient *infrastructure.RedisClient,
+	jwtService *services.JWTService,
 	cfg *config.Config,
 ) *AuthHandler {
 	return &AuthHandler{
@@ -49,6 +51,7 @@ func NewAuthHandler(
 		otpService:        otpService,
 		userRepository:    userRepository,
 		redisClient:       redisClient,
+		jwtService:        jwtService,
 		config:            cfg,
 	}
 }
@@ -89,25 +92,39 @@ func (h *AuthHandler) GoogleSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate session token
-	sessionToken, err := h.googleAuthService.GenerateSessionToken(registeredUser.ID)
+	// Generate JWT access token (15 minutes expiry)
+	log.Printf("🔑 GOOGLE_SIGNIN: Generating access token (expires in 15 minutes)")
+	accessToken, err := h.jwtService.GenerateAccessToken(registeredUser.ID, registeredUser.Email)
 	if err != nil {
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate session token", err.Error())
+		log.Printf("ERROR: Failed to generate access token - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate access token", err.Error())
 		return
 	}
+	log.Printf("✅ GOOGLE_SIGNIN: Access token generated successfully for user: %s", registeredUser.ID)
 
-	// Store session in Redis
+	// Generate JWT refresh token (7 days expiry)
+	log.Printf("🔑 GOOGLE_SIGNIN: Generating refresh token (expires in 7 days)")
+	refreshToken, err := h.jwtService.GenerateRefreshToken(registeredUser.ID, registeredUser.Email)
+	if err != nil {
+		log.Printf("ERROR: Failed to generate refresh token - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate refresh token", err.Error())
+		return
+	}
+	log.Printf("✅ GOOGLE_SIGNIN: Refresh token generated successfully for user: %s", registeredUser.ID)
+
+	// Store refresh token in Redis (for revocation)
 	ctx := r.Context()
-	if err := h.sessionService.CreateSession(ctx, sessionToken, registeredUser); err != nil {
-		log.Printf("Failed to create session in Redis: %v", err)
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to create session", err.Error())
+	log.Printf("💾 GOOGLE_SIGNIN: Storing refresh token in Redis")
+	if err := h.sessionService.StoreRefreshToken(ctx, refreshToken, registeredUser.ID); err != nil {
+		log.Printf("ERROR: Failed to store refresh token in Redis: %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to store refresh token", err.Error())
 		return
 	}
 
-	// Set secure HTTP-only cookie for the session token
-	cookie := &http.Cookie{
-		Name:     "session_token",
-		Value:    sessionToken,
+	// Set secure HTTP-only cookie for refresh token
+	refreshCookie := &http.Cookie{
+		Name:     "refresh_token",
+		Value:    refreshToken,
 		Path:     "/",
 		MaxAge:   7 * 24 * 60 * 60, // 7 days
 		HttpOnly: true,              // Prevents JavaScript access (XSS protection)
@@ -117,24 +134,84 @@ func (h *AuthHandler) GoogleSignIn(w http.ResponseWriter, r *http.Request) {
 	
 	// Set domain if configured
 	if h.config.CookieDomain != "" {
-		cookie.Domain = h.config.CookieDomain
+		refreshCookie.Domain = h.config.CookieDomain
 	}
 	
-	http.SetCookie(w, cookie)
-	log.Printf("Cookie set in browser")
+	http.SetCookie(w, refreshCookie)
+	log.Printf("Refresh token cookie set in browser")
 
-	// Send success response (token also in response for frontend flexibility)
+	// Send success response with access token (refresh token in cookie)
 	response := models.GoogleSignInResponse{
 		Success: true,
 		Message: "User authenticated successfully",
 		User:    registeredUser,
-		Token:   sessionToken, // Still include in response if frontend needs it
+		Token:   accessToken, // Access token in response body
 	}
 
 	h.sendJSONResponse(w, http.StatusOK, response)
 }
 
-// Logout handles user logout by deleting the session cookie
+// RefreshToken handles refresh token requests to get a new access token
+func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	log.Printf("🔄 REFRESH: Refresh token endpoint hit - Method: %s, URL: %s", r.Method, r.URL.Path)
+
+	if r.Method != http.MethodPost {
+		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only POST method is allowed")
+		return
+	}
+
+	// Get refresh token from cookie
+	cookie, err := r.Cookie("refresh_token")
+	if err != nil || cookie.Value == "" {
+		log.Printf("❌ REFRESH: Refresh token cookie not found")
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Refresh token not found")
+		return
+	}
+
+	refreshToken := cookie.Value
+	ctx := r.Context()
+	log.Printf("🔍 REFRESH: Refresh token found in cookie, validating...")
+
+	// Validate refresh token JWT
+	claims, err := h.jwtService.ValidateRefreshToken(refreshToken)
+	if err != nil {
+		log.Printf("❌ REFRESH: Invalid refresh token - %v", err)
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid or expired refresh token")
+		return
+	}
+	log.Printf("✅ REFRESH: Refresh token JWT validated successfully for user: %s", claims.UserID)
+
+	// Verify refresh token exists in Redis (for revocation check)
+	log.Printf("🔍 REFRESH: Checking refresh token in Redis...")
+	_, err = h.sessionService.ValidateRefreshToken(ctx, refreshToken)
+	if err != nil {
+		log.Printf("❌ REFRESH: Refresh token not found in Redis (revoked) - %v", err)
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Refresh token has been revoked")
+		return
+	}
+	log.Printf("✅ REFRESH: Refresh token found in Redis (not revoked)")
+
+	// Generate new access token
+	log.Printf("🔑 REFRESH: Generating new access token (expires in 15 minutes)")
+	newAccessToken, err := h.jwtService.GenerateAccessToken(claims.UserID, claims.Email)
+	if err != nil {
+		log.Printf("ERROR: Failed to generate new access token - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate access token", err.Error())
+		return
+	}
+
+	log.Printf("✅ REFRESH: New access token generated successfully for user: %s", claims.UserID)
+	log.Printf("🎉 REFRESH: Token refresh completed - user can continue without re-login")
+
+	// Return new access token
+	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"success":      true,
+		"access_token": newAccessToken,
+		"message":      "Access token refreshed successfully",
+	})
+}
+
+// Logout handles user logout by deleting the refresh token
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	// Only allow POST requests
 	if r.Method != http.MethodPost {
@@ -142,19 +219,20 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get session token from cookie
-	cookie, err := r.Cookie("session_token")
-	if err == nil && cookie.Value != "" {
-		// Delete session from Redis
-		ctx := r.Context()
-		if err := h.sessionService.DeleteSession(ctx, cookie.Value); err != nil {
-			log.Printf("Failed to delete session from Redis: %v", err)
+	ctx := r.Context()
+
+	// Get refresh token from cookie and delete it from Redis
+	refreshCookie, err := r.Cookie("refresh_token")
+	if err == nil && refreshCookie.Value != "" {
+		// Delete refresh token from Redis
+		if err := h.sessionService.DeleteRefreshToken(ctx, refreshCookie.Value); err != nil {
+			log.Printf("Failed to delete refresh token from Redis: %v", err)
 		}
 	}
 
-	// Delete the session cookie by setting it with MaxAge: -1
+	// Delete the refresh token cookie by setting it with MaxAge: -1
 	deleteCookie := &http.Cookie{
-		Name:     "session_token",
+		Name:     "refresh_token",
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1, // Delete the cookie
@@ -169,7 +247,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	http.SetCookie(w, deleteCookie)
-	log.Printf("Cookie deleted from browser")
+	log.Printf("Refresh token cookie deleted from browser")
 
 	// Send success response
 	response := models.GoogleSignInResponse{
@@ -390,25 +468,39 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: dbUser.CreatedAt,
 	}
 
-	// Generate session token
-	sessionToken, err := h.googleAuthService.GenerateSessionToken(authUser.ID)
+	// Generate JWT access token (15 minutes expiry)
+	log.Printf("🔑 LOGIN: Generating access token (expires in 15 minutes)")
+	accessToken, err := h.jwtService.GenerateAccessToken(authUser.ID, authUser.Email)
 	if err != nil {
-		log.Printf("ERROR: Failed to generate session token - %v", err)
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate session token", err.Error())
+		log.Printf("ERROR: Failed to generate access token - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate access token", err.Error())
 		return
 	}
+	log.Printf("✅ LOGIN: Access token generated successfully for user: %s", authUser.ID)
 
-	// Store session in Redis
-	if err := h.sessionService.CreateSession(ctx, sessionToken, authUser); err != nil {
-		log.Printf("ERROR: Failed to create session in Redis: %v", err)
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to create session", err.Error())
+	// Generate JWT refresh token (7 days expiry)
+	log.Printf("🔑 LOGIN: Generating refresh token (expires in 7 days)")
+	refreshToken, err := h.jwtService.GenerateRefreshToken(authUser.ID, authUser.Email)
+	if err != nil {
+		log.Printf("ERROR: Failed to generate refresh token - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate refresh token", err.Error())
 		return
 	}
+	log.Printf("✅ LOGIN: Refresh token generated successfully for user: %s", authUser.ID)
 
-	// Set secure HTTP-only cookie for the session token
-	cookie := &http.Cookie{
-		Name:     "session_token",
-		Value:    sessionToken,
+	// Store refresh token in Redis (for revocation)
+	log.Printf("💾 LOGIN: Storing refresh token in Redis")
+	if err := h.sessionService.StoreRefreshToken(ctx, refreshToken, authUser.ID); err != nil {
+		log.Printf("ERROR: Failed to store refresh token in Redis: %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to store refresh token", err.Error())
+		return
+	}
+	log.Printf("✅ LOGIN: Refresh token stored in Redis successfully")
+
+	// Set secure HTTP-only cookie for refresh token
+	refreshCookie := &http.Cookie{
+		Name:     "refresh_token",
+		Value:    refreshToken,
 		Path:     "/",
 		MaxAge:   7 * 24 * 60 * 60, // 7 days
 		HttpOnly: true,              // Prevents JavaScript access (XSS protection)
@@ -418,18 +510,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	
 	// Set domain if configured
 	if h.config.CookieDomain != "" {
-		cookie.Domain = h.config.CookieDomain
+		refreshCookie.Domain = h.config.CookieDomain
 	}
 	
-	http.SetCookie(w, cookie)
-	log.Printf("Cookie set in browser")
+	http.SetCookie(w, refreshCookie)
+	log.Printf("Refresh token cookie set in browser")
 
-	// Return success response
+	// Return success response with access token (refresh token in cookie)
 	response := models.GoogleSignInResponse{
 		Success: true,
 		Message: "Login successful",
 		User:    authUser,
-		Token:   sessionToken,
+		Token:   accessToken, // Access token in response body
 	}
 
 	h.sendJSONResponse(w, http.StatusOK, response)
@@ -514,25 +606,38 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: dbUser.CreatedAt,
 	}
 
-	// Generate session token
-	sessionToken, err := h.googleAuthService.GenerateSessionToken(registeredUser.ID)
+	// Generate JWT access token (15 minutes expiry)
+	log.Printf("🔑 REGISTER: Generating access token (expires in 15 minutes)")
+	accessToken, err := h.jwtService.GenerateAccessToken(registeredUser.ID, registeredUser.Email)
 	if err != nil {
-		log.Printf("ERROR: Failed to generate session token - %v", err)
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate session token", err.Error())
+		log.Printf("ERROR: Failed to generate access token - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate access token", err.Error())
+		return
+	}
+	log.Printf("✅ REGISTER: Access token generated successfully for user: %s", registeredUser.ID)
+
+	// Generate JWT refresh token (7 days expiry)
+	log.Printf("🔑 REGISTER: Generating refresh token (expires in 7 days)")
+	refreshToken, err := h.jwtService.GenerateRefreshToken(registeredUser.ID, registeredUser.Email)
+	if err != nil {
+		log.Printf("ERROR: Failed to generate refresh token - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate refresh token", err.Error())
+		return
+	}
+	log.Printf("✅ REGISTER: Refresh token generated successfully for user: %s", registeredUser.ID)
+
+	// Store refresh token in Redis (for revocation)
+	log.Printf("💾 REGISTER: Storing refresh token in Redis")
+	if err := h.sessionService.StoreRefreshToken(ctx, refreshToken, registeredUser.ID); err != nil {
+		log.Printf("ERROR: Failed to store refresh token in Redis: %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to store refresh token", err.Error())
 		return
 	}
 
-	// Store session in Redis
-	if err := h.sessionService.CreateSession(ctx, sessionToken, registeredUser); err != nil {
-		log.Printf("ERROR: Failed to create session in Redis: %v", err)
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to create session", err.Error())
-		return
-	}
-
-	// Set secure HTTP-only cookie for the session token
-	cookie := &http.Cookie{
-		Name:     "session_token",
-		Value:    sessionToken,
+	// Set secure HTTP-only cookie for refresh token
+	refreshCookie := &http.Cookie{
+		Name:     "refresh_token",
+		Value:    refreshToken,
 		Path:     "/",
 		MaxAge:   7 * 24 * 60 * 60, // 7 days
 		HttpOnly: true,              // Prevents JavaScript access (XSS protection)
@@ -542,18 +647,18 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	
 	// Set domain if configured
 	if h.config.CookieDomain != "" {
-		cookie.Domain = h.config.CookieDomain
+		refreshCookie.Domain = h.config.CookieDomain
 	}
 	
-	http.SetCookie(w, cookie)
-	log.Printf("Cookie set in browser")
+	http.SetCookie(w, refreshCookie)
+	log.Printf("Refresh token cookie set in browser")
 
-	// Return success response with user info
+	// Return success response with access token (refresh token in cookie)
 	response := models.GoogleSignInResponse{
 		Success: true,
 		Message: "User registered successfully",
 		User:    registeredUser,
-		Token:   sessionToken, // Include token in response for frontend flexibility
+		Token:   accessToken, // Access token in response body
 	}
 
 	h.sendJSONResponse(w, http.StatusCreated, response)
@@ -605,7 +710,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	go func(emailAddr, otpCode string) {
 		log.Printf("Sending OTP via email (async)")
 		if err := h.emailService.SendOTPEmail(emailAddr, otpCode); err != nil {
-			log.Printf("ERROR: Failed to send OTP email asynchronously - Email: %s, Error: %v", emailAddr, err)
+			log.Printf("ERROR: Failed to send OTP email asynchronously - Error: %v", err)
 			// Note: We don't fail the request here since OTP is already stored in Redis
 			// The user can still verify the OTP even if email fails (though unlikely)
 		} else {
