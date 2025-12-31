@@ -54,3 +54,21 @@ func (r *PartnerProfileRepository) GetByAccountID(ctx context.Context, accountID
 	return &p, nil
 }
 
+// GetByPrinterID retrieves a partner profile by printer_id (the unique agent identifier)
+func (r *PartnerProfileRepository) GetByPrinterID(ctx context.Context, printerID string) (*partner_profile.PartnerProfile, error) {
+	var p partner_profile.PartnerProfile
+	err := r.db.QueryRow(ctx,
+		"SELECT id, account_id, shop_name, printer_id FROM partner_profiles WHERE printer_id = $1",
+		printerID,
+	).Scan(&p.ID, &p.AccountID, &p.ShopName, &p.PrinterID)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("partner profile not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get partner profile: %w", err)
+	}
+
+	return &p, nil
+}
+

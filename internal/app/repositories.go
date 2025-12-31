@@ -11,6 +11,7 @@ type Repositories struct {
 	AccountRepository         *repositories.AccountRepository
 	PartnerProfileRepository  *repositories.PartnerProfileRepository
 	CustomerProfileRepository *repositories.CustomerProfileRepository
+	PrinterRepository         *repositories.PrinterRepository
 }
 
 // setupRepositories initializes all repositories
@@ -20,6 +21,7 @@ func setupRepositories(postgresClient *infrastructure.PostgresClient) *Repositor
 		AccountRepository:         repositories.NewAccountRepository(postgresClient.GetPool()),
 		PartnerProfileRepository:  repositories.NewPartnerProfileRepository(postgresClient.GetPool()),
 		CustomerProfileRepository: repositories.NewCustomerProfileRepository(postgresClient.GetPool()),
+		PrinterRepository:         repositories.NewPrinterRepository(postgresClient.GetPool()),
 	}
 }
 

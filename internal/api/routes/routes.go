@@ -6,12 +6,12 @@ import (
 	"print-pro-backend/internal/api/handlers/printer_handler"
 	"print-pro-backend/internal/infrastructure"
 	"print-pro-backend/internal/middleware/rate_limiter"
-	"print-pro-backend/internal/middleware/role"
 )
 
 // RegisterRoutes registers all application routes
 func RegisterRoutes(
 	authHandler *auth_handler.AuthHandler,
+	printerHandler *printer_handler.PrinterHandler,
 	rateLimiter *rate_limiter.RateLimiter,
 	authMiddlewareFunc func(http.HandlerFunc) http.HandlerFunc,
 	corsHandler func(http.HandlerFunc) http.HandlerFunc,
@@ -24,12 +24,15 @@ func RegisterRoutes(
 	http.HandleFunc("/health", corsHandler(createHealthCheck(redisClient, postgresClient)))
 	http.HandleFunc("/ping", corsHandler(createHealthCheck(redisClient, postgresClient)))
 
-	// Printer sync route from agent (requires partner role)
-	http.HandleFunc("/api/update-printers", corsHandler(rateLimiter.LimitMiddleware(authMiddlewareFunc(role.RequireRole("partner")(printer_handler.UpdatePrintersHandler)))))
+	// Printer sync route from agent (public endpoint - agent doesn't have auth token)
+	http.HandleFunc("/api/update-printers", corsHandler(rateLimiter.LimitMiddleware(printerHandler.UpdatePrintersHandler)))
+	
+	// Printer retrieval route (protected - requires partner authentication)
+	http.HandleFunc("/api/printers", corsHandler(rateLimiter.LimitMiddleware(authMiddlewareFunc(printerHandler.GetPrintersHandler))))
 	
 	// Register auth routes
 	RegisterAuthRoutes(authHandler, rateLimiter, authMiddlewareFunc, corsHandler)
-	
+
 	// Root handler should be last (catches all unmatched routes)
 	http.HandleFunc("/", corsHandler(handler))
 }
