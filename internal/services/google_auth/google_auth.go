@@ -13,19 +13,24 @@ import (
 	"print-pro-backend/internal/models"
 	"print-pro-backend/internal/repositories"
 	"time"
+
 )
 
 // GoogleAuthService handles Google authentication
 type GoogleAuthService struct {
-	config         *config.Config
-	userRepository *repositories.UserRepository
+	config                  *config.Config
+	accountRepository      *repositories.AccountRepository
+	partnerProfileRepository *repositories.PartnerProfileRepository
+	customerProfileRepository *repositories.CustomerProfileRepository
 }
 
 // NewGoogleAuthService creates a new GoogleAuthService instance
-func NewGoogleAuthService(cfg *config.Config, userRepo *repositories.UserRepository) *GoogleAuthService {
+func NewGoogleAuthService(cfg *config.Config, accountRepo *repositories.AccountRepository, partnerProfileRepo *repositories.PartnerProfileRepository, customerProfileRepo *repositories.CustomerProfileRepository) *GoogleAuthService {
 	return &GoogleAuthService{
-		config:         cfg,
-		userRepository: userRepo,
+		config:                  cfg,
+		accountRepository:       accountRepo,
+		partnerProfileRepository: partnerProfileRepo,
+		customerProfileRepository: customerProfileRepo,
 	}
 }
 
@@ -124,44 +129,34 @@ func (s *GoogleAuthService) VerifyGoogleToken(ctx context.Context, idToken strin
 }
 
 // RegisterOrLoginUser registers a new user or returns existing user
-// Checks if user exists by email, creates new user if not found
+// Closed Loop Enrollment Strategy:
+// - If email exists in accounts table → allow login (auto-detect user_type)
+// - If email does NOT exist → return error (must register via email/password first)
+// This ensures partners must register via /api/auth/register/partner before using Google Sign-In
 func (s *GoogleAuthService) RegisterOrLoginUser(ctx context.Context, googleUser *models.User) (*models.User, error) {
-	// Check if user already exists by email
-	dbUser, err := s.userRepository.GetByEmail(ctx, googleUser.Email)
-	if err == nil {
-		// User exists - return existing user
-		// Convert database user to auth user model
-		return &models.User{
-			ID:        fmt.Sprintf("%d", dbUser.ID),
-			Email:     dbUser.Email,
-			Name:      dbUser.FullName,
-			Provider:  "google",
-			CreatedAt: dbUser.CreatedAt,
-			UpdatedAt: time.Now(),
-		}, nil
-	}
-
-	// User doesn't exist - create new user
-	// For Google OAuth users, we use a placeholder for password_hash since they authenticate via Google
-	// The password_hash field is NOT NULL, so we store "oauth_google" as a marker
-	// In production, you might want to add a provider field to track OAuth users separately
-	newUser, err := s.userRepository.Create(ctx, googleUser.Name, googleUser.Email, "oauth_google")
+	// Check if account already exists by email
+	accountRecord, err := s.accountRepository.GetByEmail(ctx, googleUser.Email)
 	if err != nil {
-		return nil, fmt.Errorf("failed to register user: %w", err)
+		// Account not found - return error (Closed Loop: must register first)
+		log.Printf("Google Sign-In: Account not found - user must register first")
+		return nil, fmt.Errorf("account not found - please register as a partner or customer first using email/password registration")
 	}
 
-	log.Printf("New user registered (ID: %d)", newUser.ID)
-
-	// Convert database user to auth user model
+	// Account exists - use the user_type from the accounts table (automatic detection)
+	log.Printf("Google Sign-In: Account found - ID: %d, UserType: %s (auto-detected)", accountRecord.ID, accountRecord.UserType)
+	
+	// Return user with auto-detected user_type from accounts table
 	return &models.User{
-		ID:        fmt.Sprintf("%d", newUser.ID),
-		Email:     newUser.Email,
-		Name:      newUser.FullName,
+		ID:        fmt.Sprintf("%d", accountRecord.ID),
+		Email:     accountRecord.Email,
+		Name:      googleUser.Name, // Use name from Google token
+		UserType:  accountRecord.UserType, // Auto-detected from accounts table
 		Provider:  "google",
-		CreatedAt: newUser.CreatedAt,
+		CreatedAt: accountRecord.CreatedAt,
 		UpdatedAt: time.Now(),
 	}, nil
 }
+
 
 // GenerateSessionToken generates a session token for the user
 // Uses user ID (database ID) for session token generation
