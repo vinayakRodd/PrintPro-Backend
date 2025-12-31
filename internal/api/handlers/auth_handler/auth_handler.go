@@ -135,7 +135,7 @@ func NewAuthHandler(
 	
 	handler.resetPasswordHandler = shared.NewResetPasswordHandler(
 		otpService,
-		userRepository,
+		accountRepository,
 		handler.sendErrorResponse,
 		handler.sendJSONResponse,
 	)
