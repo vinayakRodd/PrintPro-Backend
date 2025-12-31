@@ -49,3 +49,6 @@ package-lock.json
 pnpm-lock.yaml
 yarn.lock
 
+# Test print uploads folder - contains user uploaded files
+test-print/
+

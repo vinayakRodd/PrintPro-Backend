@@ -3,9 +3,12 @@ package app
 import (
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"print-pro-backend/internal/api/handlers/auth_handler"
 	"print-pro-backend/internal/api/handlers/health"
 	"print-pro-backend/internal/api/handlers/printer_handler"
+	"print-pro-backend/internal/api/handlers/test_print"
 	"print-pro-backend/internal/api/routes"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
@@ -78,6 +81,28 @@ func (a *Application) RegisterRoutes() {
 		health.CreateHealthCheck,
 		health.RootHandler,
 	)
+
+	// Initialize test print handlers
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Printf("WARNING: Failed to get working directory, using current directory for test-print: %v", err)
+		wd = "."
+	}
+	testPrintDir := filepath.Join(wd, "test-print")
+	
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(testPrintDir, 0755); err != nil {
+		log.Printf("WARNING: Failed to create test-print directory: %v", err)
+	}
+
+	printHandler := test_print.NewPrintHandler(testPrintDir)
+	uploadHandler := test_print.NewUploadHandler(testPrintDir)
+
+	// Register test print routes
+	http.HandleFunc("/api/test-print/upload", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(uploadHandler.UploadFile))))
+	http.HandleFunc("/api/test-print/list", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListFiles))))
+	http.HandleFunc("/api/test-print/printers", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListPrinters))))
+	http.HandleFunc("/api/test-print/print", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PrintFile))))
 }
 
 // Close gracefully shuts down the application by closing Redis and PostgreSQL connections

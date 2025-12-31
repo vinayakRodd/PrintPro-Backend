@@ -1,0 +1,3 @@
+# Prevent test-print folder from being merged
+test-print/ merge=ours
+
