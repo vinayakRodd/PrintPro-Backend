@@ -1,4 +1,4 @@
-package auth_handler
+package login
 
 import (
 	"encoding/json"
@@ -8,11 +8,36 @@ import (
 	"strings"
 	"print-pro-backend/internal/models"
 	"print-pro-backend/internal/models/account"
+	"print-pro-backend/internal/api/handlers/auth_handler/shared"
+	"print-pro-backend/internal/repositories"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Login handles user login with email and password (legacy unified endpoint - deprecated)
-func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+// LoginHandler handles user login with email and password (legacy unified endpoint - deprecated)
+type LoginHandler struct {
+	accountRepository *repositories.AccountRepository
+	tokenHelper       shared.TokenHelper
+	sendErrorResponse func(http.ResponseWriter, int, string, string)
+	sendJSONResponse  func(http.ResponseWriter, int, interface{})
+}
+
+// NewLoginHandler creates a new LoginHandler instance
+func NewLoginHandler(
+	accountRepository *repositories.AccountRepository,
+	tokenHelper shared.TokenHelper,
+	sendErrorResponse func(http.ResponseWriter, int, string, string),
+	sendJSONResponse func(http.ResponseWriter, int, interface{}),
+) *LoginHandler {
+	return &LoginHandler{
+		accountRepository: accountRepository,
+		tokenHelper:       tokenHelper,
+		sendErrorResponse: sendErrorResponse,
+		sendJSONResponse:  sendJSONResponse,
+	}
+}
+
+// HandleLogin handles user login with email and password (legacy unified endpoint - deprecated)
+func (h *LoginHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Login endpoint hit (LEGACY) - Method: %s, URL: %s", r.Method, r.URL.Path)
 
 	if r.Method != http.MethodPost {
@@ -109,82 +134,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Success: true,
 		Message: "Login successful",
 		User:    authUser,
-		Token:   accessToken, // Access token in response body
-	}
-
-	h.sendJSONResponse(w, http.StatusOK, response)
-}
-
-// Register handles user registration (legacy - deprecated)
-func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Register endpoint hit (DEPRECATED) - Method: %s, URL: %s", r.Method, r.URL.Path)
-	h.sendErrorResponse(w, http.StatusGone, "Deprecated", "This endpoint is deprecated. Please use /api/auth/register/partner or /api/auth/register/customer.")
-}
-
-// GoogleSignIn handles Google Sign-In requests (legacy unified endpoint - deprecated)
-func (h *AuthHandler) GoogleSignIn(w http.ResponseWriter, r *http.Request) {
-	// Only allow POST requests
-	if r.Method != http.MethodPost {
-		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only POST method is allowed")
-		return
-	}
-
-	// Parse request body
-	var req models.GoogleSignInRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
-		return
-	}
-
-	// Validate token
-	if req.Token == "" {
-		h.sendErrorResponse(w, http.StatusBadRequest, "Token is required", "Token field cannot be empty")
-		return
-	}
-
-	// Verify Google token
-	log.Printf("🔍 GOOGLE: Verifying Google ID token...")
-	ctx := r.Context()
-	user, err := h.googleAuthService.VerifyGoogleToken(ctx, req.Token)
-	if err != nil {
-		log.Printf("❌ GOOGLE: Token verification failed - %v", err)
-		h.sendErrorResponse(w, http.StatusUnauthorized, "Token verification failed", err.Error())
-		return
-	}
-	log.Printf("✅ GOOGLE: Token verified successfully")
-
-	// Register or login user (backend automatically detects user_type from accounts table)
-	log.Printf("🔍 GOOGLE: Registering or logging in user (auto-detecting user_type)...")
-	registeredUser, err := h.googleAuthService.RegisterOrLoginUser(ctx, user)
-	if err != nil {
-		log.Printf("❌ GOOGLE: Failed to register/login user - %v", err)
-		// Check if error is about account not found (Closed Loop enrollment)
-		if strings.Contains(err.Error(), "account not found") || strings.Contains(err.Error(), "register first") {
-			h.sendErrorResponse(w, http.StatusNotFound, "Account not found", "Account not found. Please register as a partner or customer first using email/password registration.")
-			return
-		}
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to register/login user", err.Error())
-		return
-	}
-	log.Printf("✅ GOOGLE: User registered/logged in - ID: %s, UserType: %s", registeredUser.ID, registeredUser.UserType)
-
-	// Generate tokens and set cookies
-	finalUserType := registeredUser.UserType
-	if finalUserType == "" {
-		// Fallback to customer if user_type not set (for backward compatibility)
-		finalUserType = account.UserTypeCustomer
-	}
-	accessToken, _, err := h.tokenHelper.GenerateTokensAndSetCookies(w, registeredUser.ID, registeredUser.Email, finalUserType, ctx)
-	if err != nil {
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate tokens", err.Error())
-		return
-	}
-
-	// Send success response with access token (refresh token in cookie)
-	response := models.GoogleSignInResponse{
-		Success: true,
-		Message: "User authenticated successfully",
-		User:    registeredUser,
 		Token:   accessToken, // Access token in response body
 	}
 

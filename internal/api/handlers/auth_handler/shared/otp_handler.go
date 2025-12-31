@@ -1,14 +1,35 @@
-package auth_handler
+package shared
 
 import (
 	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
+	"print-pro-backend/internal/services/otp"
 )
 
-// VerifyOTP handles OTP verification only (without password reset)
-func (h *AuthHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
+// OTPHandler handles OTP verification (works for both customer and partner)
+type OTPHandler struct {
+	otpService      *otp.OTPService
+	sendErrorResponse func(http.ResponseWriter, int, string, string)
+	sendJSONResponse  func(http.ResponseWriter, int, interface{})
+}
+
+// NewOTPHandler creates a new OTPHandler instance
+func NewOTPHandler(
+	otpService *otp.OTPService,
+	sendErrorResponse func(http.ResponseWriter, int, string, string),
+	sendJSONResponse func(http.ResponseWriter, int, interface{}),
+) *OTPHandler {
+	return &OTPHandler{
+		otpService:       otpService,
+		sendErrorResponse: sendErrorResponse,
+		sendJSONResponse:  sendJSONResponse,
+	}
+}
+
+// HandleVerifyOTP handles OTP verification only (without password reset)
+func (h *OTPHandler) HandleVerifyOTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Verify OTP endpoint hit - Method: %s, URL: %s", r.Method, r.URL.Path)
 	
 	if r.Method != http.MethodPost {
@@ -38,11 +59,11 @@ func (h *AuthHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 
 	// Verify OTP (trim whitespace from email and OTP)
 	email := strings.TrimSpace(req.Email)
-	otp := strings.TrimSpace(req.OTP)
+	otpCode := strings.TrimSpace(req.OTP)
 	
-	log.Printf("Verifying OTP - OTP length: %d", len(otp))
+	log.Printf("Verifying OTP - OTP length: %d", len(otpCode))
 	
-	valid, err := h.otpService.VerifyOTP(ctx, email, otp)
+	valid, err := h.otpService.VerifyOTP(ctx, email, otpCode)
 	if err != nil || !valid {
 		log.Printf("OTP verification failed: %v", err)
 		h.sendErrorResponse(w, http.StatusUnauthorized, "Invalid or expired OTP", "The OTP is invalid or has expired. Please request a new one.")

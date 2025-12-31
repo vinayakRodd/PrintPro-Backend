@@ -1,4 +1,4 @@
-package auth_handler
+package shared
 
 import (
 	"bytes"
@@ -9,12 +9,36 @@ import (
 	"net/http"
 	"strings"
 	"print-pro-backend/internal/models"
-
+	"print-pro-backend/internal/services/otp"
+	"print-pro-backend/internal/repositories"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// ResetPassword handles password reset with OTP verification
-func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+// ResetPasswordHandler handles password reset with OTP verification (works for both customer and partner)
+type ResetPasswordHandler struct {
+	otpService      *otp.OTPService
+	userRepository  *repositories.UserRepository
+	sendErrorResponse func(http.ResponseWriter, int, string, string)
+	sendJSONResponse  func(http.ResponseWriter, int, interface{})
+}
+
+// NewResetPasswordHandler creates a new ResetPasswordHandler instance
+func NewResetPasswordHandler(
+	otpService *otp.OTPService,
+	userRepository *repositories.UserRepository,
+	sendErrorResponse func(http.ResponseWriter, int, string, string),
+	sendJSONResponse func(http.ResponseWriter, int, interface{}),
+) *ResetPasswordHandler {
+	return &ResetPasswordHandler{
+		otpService:       otpService,
+		userRepository:   userRepository,
+		sendErrorResponse: sendErrorResponse,
+		sendJSONResponse:  sendJSONResponse,
+	}
+}
+
+// HandleResetPassword handles password reset with OTP verification
+func (h *ResetPasswordHandler) HandleResetPassword(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Reset password endpoint hit - Method: %s, URL: %s", r.Method, r.URL.Path)
 	
 	if r.Method != http.MethodPost {

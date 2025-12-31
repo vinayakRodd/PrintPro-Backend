@@ -27,6 +27,7 @@ func NewTokenHelper(jwtService *jwt.JWTService, sessionService *session.SessionS
 
 // GenerateTokensAndSetCookies generates JWT tokens and sets refresh token cookie
 // Returns accessToken and refreshToken, or error if generation fails
+// SECURITY: Never log the actual token values - only log status messages
 func (h *TokenHelper) GenerateTokensAndSetCookies(w http.ResponseWriter, userID, email, userType string, ctx context.Context) (string, string, error) {
 	// Generate JWT access token (15 minutes expiry)
 	log.Printf("🔑 Generating access token (expires in 15 minutes) for %s: %s", userType, userID)
@@ -36,6 +37,7 @@ func (h *TokenHelper) GenerateTokensAndSetCookies(w http.ResponseWriter, userID,
 		return "", "", err
 	}
 	log.Printf("✅ Access token generated successfully for user: %s", userID)
+	// SECURITY NOTE: accessToken contains sensitive data - never log it
 
 	// Generate JWT refresh token (7 days expiry)
 	log.Printf("🔑 Generating refresh token (expires in 7 days)")
@@ -45,6 +47,7 @@ func (h *TokenHelper) GenerateTokensAndSetCookies(w http.ResponseWriter, userID,
 		return "", "", err
 	}
 	log.Printf("✅ Refresh token generated successfully for user: %s", userID)
+	// SECURITY NOTE: refreshToken contains sensitive data - never log it
 
 	// Store refresh token in Redis (for revocation)
 	log.Printf("💾 Storing refresh token in Redis")

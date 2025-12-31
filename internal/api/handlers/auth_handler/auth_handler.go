@@ -5,6 +5,8 @@ import (
 	"print-pro-backend/internal/api/handlers/auth_handler/session_handlers"
 	"print-pro-backend/internal/api/handlers/auth_handler/customer"
 	"print-pro-backend/internal/api/handlers/auth_handler/partner"
+	"print-pro-backend/internal/api/handlers/auth_handler/login"
+	"print-pro-backend/internal/api/handlers/auth_handler/shared"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
 	"print-pro-backend/internal/repositories"
@@ -35,10 +37,19 @@ type AuthHandler struct {
 	refreshTokenHandler   *session_handlers.RefreshTokenHandler
 	logoutHandler         *session_handlers.LogoutHandler
 	meHandler             *session_handlers.MeHandler
-	partnerLoginHandler   *partner.LoginHandler
-	partnerGoogleHandler  *partner.GoogleSignInHandler
-	customerLoginHandler  *customer.LoginHandler
-	customerGoogleHandler *customer.GoogleSignInHandler
+	// Partner handlers (exposed for direct access from routes)
+	PartnerAuthHandler *partner.PartnerAuthHandler
+	// Customer handlers (exposed for direct access from routes)
+	CustomerAuthHandler *customer.CustomerAuthHandler
+	// Shared handlers (work for both customer and partner)
+	emailHandler          *shared.EmailHandler
+	forgotPasswordHandler *shared.ForgotPasswordHandler
+	otpHandler            *shared.OTPHandler
+	resetPasswordHandler  *shared.ResetPasswordHandler
+	// Legacy login handlers (deprecated)
+	legacyLoginHandler      *login.LoginHandler
+	legacyRegisterHandler   *login.RegisterHandler
+	legacyGoogleSignInHandler *login.GoogleSignInHandler
 }
 
 // NewAuthHandler creates a new AuthHandler instance
@@ -81,30 +92,67 @@ func NewAuthHandler(
 		meHandler:                  meHandler,
 	}
 	
-	// Initialize partner handlers with proper function references
-	handler.partnerLoginHandler = partner.NewLoginHandler(
+	// Initialize partner handlers (initialization moved to partner package)
+	handler.PartnerAuthHandler = partner.NewPartnerAuthHandler(
 		accountRepository,
-		tokenHelper,
-		handler.sendErrorResponse,
-		handler.sendJSONResponse,
-	)
-	
-	handler.partnerGoogleHandler = partner.NewGoogleSignInHandler(
+		partnerProfileRepository,
 		googleAuthService,
 		tokenHelper,
 		handler.sendErrorResponse,
 		handler.sendJSONResponse,
 	)
 	
-	// Initialize customer handlers with proper function references
-	handler.customerLoginHandler = customer.NewLoginHandler(
+	// Initialize customer handlers (initialization moved to customer package)
+	handler.CustomerAuthHandler = customer.NewCustomerAuthHandler(
+		accountRepository,
+		customerProfileRepository,
+		googleAuthService,
+		tokenHelper,
+		handler.sendErrorResponse,
+		handler.sendJSONResponse,
+	)
+	
+	// Initialize shared handlers (work for both customer and partner)
+	handler.emailHandler = shared.NewEmailHandler(
+		otpService,
+		userRepository,
+		handler.sendErrorResponse,
+		handler.sendJSONResponse,
+	)
+	
+	handler.forgotPasswordHandler = shared.NewForgotPasswordHandler(
+		otpService,
+		emailService,
+		handler.sendErrorResponse,
+		handler.sendJSONResponse,
+	)
+	
+	handler.otpHandler = shared.NewOTPHandler(
+		otpService,
+		handler.sendErrorResponse,
+		handler.sendJSONResponse,
+	)
+	
+	handler.resetPasswordHandler = shared.NewResetPasswordHandler(
+		otpService,
+		userRepository,
+		handler.sendErrorResponse,
+		handler.sendJSONResponse,
+	)
+	
+	// Initialize legacy login handlers (deprecated)
+	handler.legacyLoginHandler = login.NewLoginHandler(
 		accountRepository,
 		tokenHelper,
 		handler.sendErrorResponse,
 		handler.sendJSONResponse,
 	)
 	
-	handler.customerGoogleHandler = customer.NewGoogleSignInHandler(
+	handler.legacyRegisterHandler = login.NewRegisterHandler(
+		handler.sendErrorResponse,
+	)
+	
+	handler.legacyGoogleSignInHandler = login.NewGoogleSignInHandler(
 		googleAuthService,
 		tokenHelper,
 		handler.sendErrorResponse,
@@ -114,25 +162,9 @@ func NewAuthHandler(
 	return handler
 }
 
-// LoginPartner delegates to partner login handler
-func (h *AuthHandler) LoginPartner(w http.ResponseWriter, r *http.Request) {
-	h.partnerLoginHandler.HandleLogin(w, r)
-}
-
-// LoginCustomer delegates to customer login handler
-func (h *AuthHandler) LoginCustomer(w http.ResponseWriter, r *http.Request) {
-	h.customerLoginHandler.HandleLogin(w, r)
-}
-
-// GoogleSignInPartner delegates to partner Google sign-in handler
-func (h *AuthHandler) GoogleSignInPartner(w http.ResponseWriter, r *http.Request) {
-	h.partnerGoogleHandler.HandleGoogleSignIn(w, r)
-}
-
-// GoogleSignInCustomer delegates to customer Google sign-in handler
-func (h *AuthHandler) GoogleSignInCustomer(w http.ResponseWriter, r *http.Request) {
-	h.customerGoogleHandler.HandleGoogleSignIn(w, r)
-}
+// Partner and customer handler methods are now in their respective packages
+// Access them via: partner.LoginPartner(authHandler.PartnerAuthHandler)
+// or customer.LoginCustomer(authHandler.CustomerAuthHandler)
 
 // RefreshToken delegates to refresh token handler
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
@@ -152,5 +184,44 @@ func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 // CheckUserType delegates to me handler
 func (h *AuthHandler) CheckUserType(w http.ResponseWriter, r *http.Request) {
 	h.meHandler.HandleCheckUserType(w, r, h.sendJSONResponse, h.sendErrorResponse)
+}
+
+// Login handles user login (legacy unified endpoint - deprecated)
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	h.legacyLoginHandler.HandleLogin(w, r)
+}
+
+// Register handles user registration (legacy - deprecated)
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	h.legacyRegisterHandler.HandleRegister(w, r)
+}
+
+// GoogleSignIn handles Google Sign-In (legacy unified endpoint - deprecated)
+func (h *AuthHandler) GoogleSignIn(w http.ResponseWriter, r *http.Request) {
+	h.legacyGoogleSignInHandler.HandleGoogleSignIn(w, r)
+}
+
+// Partner and customer register methods are now in their respective packages
+// Access them via: partner.RegisterPartner(authHandler.PartnerAuthHandler)
+// or customer.RegisterCustomer(authHandler.CustomerAuthHandler)
+
+// GetEmail delegates to email handler
+func (h *AuthHandler) GetEmail(w http.ResponseWriter, r *http.Request) {
+	h.emailHandler.HandleGetEmail(w, r)
+}
+
+// ForgotPassword delegates to forgot password handler
+func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	h.forgotPasswordHandler.HandleForgotPassword(w, r)
+}
+
+// VerifyOTP delegates to OTP handler
+func (h *AuthHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
+	h.otpHandler.HandleVerifyOTP(w, r)
+}
+
+// ResetPassword delegates to reset password handler
+func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	h.resetPasswordHandler.HandleResetPassword(w, r)
 }
 
