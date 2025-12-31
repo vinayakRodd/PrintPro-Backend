@@ -53,3 +53,24 @@ func CreateHealthCheck(redisClient *infrastructure.RedisClient, postgresClient *
 	}
 }
 
+// RootHandler handles root path requests
+func RootHandler(w http.ResponseWriter, r *http.Request) {
+	// Only handle root path, not API routes
+	if r.URL.Path != "/" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "Not Found",
+			"error":   "Endpoint not found: " + r.URL.Path,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Print Pro Backend API",
+		"status":  "running",
+	})
+}
+

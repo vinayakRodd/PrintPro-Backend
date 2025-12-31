@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 	"print-pro-backend/internal/models"
 	"print-pro-backend/internal/services/jwt"
 	"print-pro-backend/internal/services/session"
@@ -46,12 +47,16 @@ func AuthMiddleware(sessionService *session.SessionService, jwtService *jwt.JWTS
 				return
 			}
 			
-			log.Printf("✅ AUTH: Access token validated successfully for user: %s", claims.UserID)
+			log.Printf("✅ AUTH: Access token validated successfully for user: %s (type: %s)", claims.UserID, claims.UserType)
 
 			// Create user object from JWT claims
 			user := &models.User{
-				ID:    claims.UserID,
-				Email: claims.Email,
+				ID:        claims.UserID,
+				Email:     claims.Email,
+				UserType:  claims.UserType, // Store user type from JWT claims
+				Provider:  "jwt",
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
 			}
 
 			// Attach user to request context

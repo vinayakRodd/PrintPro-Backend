@@ -13,14 +13,18 @@ import (
 
 // AuthHandler handles authentication-related requests
 type AuthHandler struct {
-	googleAuthService *google_auth.GoogleAuthService
-	sessionService    *session.SessionService
-	emailService      *email.EmailService
-	otpService        *otp.OTPService
-	userRepository    *repositories.UserRepository
-	redisClient       *infrastructure.RedisClient
-	jwtService        *jwt.JWTService
-	config            *config.Config
+	googleAuthService        *google_auth.GoogleAuthService
+	sessionService           *session.SessionService
+	emailService             *email.EmailService
+	otpService               *otp.OTPService
+	userRepository           *repositories.UserRepository
+	accountRepository        *repositories.AccountRepository
+	partnerProfileRepository *repositories.PartnerProfileRepository
+	customerProfileRepository *repositories.CustomerProfileRepository
+	postgresClient           *infrastructure.PostgresClient
+	redisClient              *infrastructure.RedisClient
+	jwtService               *jwt.JWTService
+	config                   *config.Config
 }
 
 // NewAuthHandler creates a new AuthHandler instance
@@ -30,19 +34,27 @@ func NewAuthHandler(
 	emailService *email.EmailService,
 	otpService *otp.OTPService,
 	userRepository *repositories.UserRepository,
+	accountRepository *repositories.AccountRepository,
+	partnerProfileRepository *repositories.PartnerProfileRepository,
+	customerProfileRepository *repositories.CustomerProfileRepository,
+	postgresClient *infrastructure.PostgresClient,
 	redisClient *infrastructure.RedisClient,
 	jwtService *jwt.JWTService,
 	cfg *config.Config,
 ) *AuthHandler {
 	return &AuthHandler{
-		googleAuthService: googleAuthService,
-		sessionService:    sessionService,
-		emailService:      emailService,
-		otpService:        otpService,
-		userRepository:    userRepository,
-		redisClient:       redisClient,
-		jwtService:        jwtService,
-		config:            cfg,
+		googleAuthService:         googleAuthService,
+		sessionService:             sessionService,
+		emailService:               emailService,
+		otpService:                 otpService,
+		userRepository:              userRepository,
+		accountRepository:          accountRepository,
+		partnerProfileRepository:    partnerProfileRepository,
+		customerProfileRepository:   customerProfileRepository,
+		postgresClient:             postgresClient,
+		redisClient:                redisClient,
+		jwtService:                 jwtService,
+		config:                     cfg,
 	}
 }
 

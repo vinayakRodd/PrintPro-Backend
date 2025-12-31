@@ -5,6 +5,7 @@ import "time"
 // GoogleSignInRequest represents the request body for Google Sign-In
 type GoogleSignInRequest struct {
 	Token string `json:"token" binding:"required"` // Google ID token
+	// Note: user_type is NOT in the request - backend detects it automatically from accounts table
 }
 
 // User represents a user in the system
@@ -14,6 +15,7 @@ type User struct {
 	Name      string    `json:"name"`
 	Picture   string    `json:"picture,omitempty"`
 	Provider  string    `json:"provider"` // e.g., "google"
+	UserType  string    `json:"user_type"` // "partner" or "customer"
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -45,11 +47,25 @@ type ResetPasswordRequest struct {
 	NewPassword string `json:"new_password"` // Optional: frontend uses this field (either password or new_password must be provided)
 }
 
-// RegisterRequest represents the request to register a new user
+// RegisterRequest represents the request to register a new user (deprecated - use RegisterPartnerRequest or RegisterCustomerRequest)
 type RegisterRequest struct {
 	FullName string `json:"full_name"` // Required: user's full name
 	Email    string `json:"email"`      // Required: user's email address
 	Password string `json:"password"`   // Required: user's password (min 6 characters)
+}
+
+// RegisterPartnerRequest represents the request to register a new partner
+type RegisterPartnerRequest struct {
+	Email     string `json:"email"`      // Required: partner's email address
+	Password  string `json:"password"`   // Required: partner's password (min 6 characters)
+	ShopName  string `json:"shop_name"`  // Required: name of the print shop
+	PrinterID string `json:"printer_id,omitempty"` // Optional: unique ID for the Python Agent
+}
+
+// RegisterCustomerRequest represents the request to register a new customer
+type RegisterCustomerRequest struct {
+	Email    string `json:"email"`    // Required: customer's email address
+	Password string `json:"password"` // Required: customer's password (min 6 characters)
 }
 
 // LoginRequest represents the request to login with email and password

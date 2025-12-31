@@ -17,8 +17,9 @@ type JWTService struct {
 
 // Claims represents JWT claims
 type Claims struct {
-	UserID   string `json:"user_id"`
-	Email    string `json:"email"`
+	UserID    string `json:"user_id"`
+	Email     string `json:"email"`
+	UserType  string `json:"user_type"`  // "partner" or "customer"
 	TokenType string `json:"token_type"` // "access" or "refresh"
 	jwt.RegisteredClaims
 }
@@ -43,10 +44,11 @@ func (s *JWTService) GetRefreshTTL() time.Duration {
 }
 
 // GenerateAccessToken generates a JWT access token
-func (s *JWTService) GenerateAccessToken(userID, email string) (string, error) {
+func (s *JWTService) GenerateAccessToken(userID, email, userType string) (string, error) {
 	claims := &Claims{
 		UserID:    userID,
 		Email:     email,
+		UserType:  userType,
 		TokenType: "access",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.accessTTL)),
@@ -60,10 +62,11 @@ func (s *JWTService) GenerateAccessToken(userID, email string) (string, error) {
 }
 
 // GenerateRefreshToken generates a JWT refresh token
-func (s *JWTService) GenerateRefreshToken(userID, email string) (string, error) {
+func (s *JWTService) GenerateRefreshToken(userID, email, userType string) (string, error) {
 	claims := &Claims{
 		UserID:    userID,
 		Email:     email,
+		UserType:  userType,
 		TokenType: "refresh",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.refreshTTL)),

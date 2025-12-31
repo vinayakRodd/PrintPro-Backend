@@ -3,8 +3,10 @@ package routes
 import (
 	"net/http"
 	"print-pro-backend/internal/api/handlers/auth_handler"
+	"print-pro-backend/internal/api/handlers/printer_handler"
 	"print-pro-backend/internal/infrastructure"
 	"print-pro-backend/internal/middleware/rate_limiter"
+	"print-pro-backend/internal/middleware/role"
 )
 
 // RegisterRoutes registers all application routes
@@ -21,6 +23,9 @@ func RegisterRoutes(
 	// Health check routes (no CORS needed, but adding for consistency)
 	http.HandleFunc("/health", corsHandler(createHealthCheck(redisClient, postgresClient)))
 	http.HandleFunc("/ping", corsHandler(createHealthCheck(redisClient, postgresClient)))
+
+	// Printer sync route from agent (requires partner role)
+	http.HandleFunc("/api/update-printers", corsHandler(rateLimiter.LimitMiddleware(authMiddlewareFunc(role.RequireRole("partner")(printer_handler.UpdatePrintersHandler)))))
 	
 	// Register auth routes
 	RegisterAuthRoutes(authHandler, rateLimiter, authMiddlewareFunc, corsHandler)
