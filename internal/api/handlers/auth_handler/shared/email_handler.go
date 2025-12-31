@@ -1,4 +1,4 @@
-package auth_handler
+package shared
 
 import (
 	"encoding/json"
@@ -6,11 +6,36 @@ import (
 	"net/http"
 	"strings"
 	"print-pro-backend/internal/middleware/auth_middleware"
+	"print-pro-backend/internal/services/otp"
+	"print-pro-backend/internal/repositories"
 )
 
-// GetEmail returns the email of the current authenticated user
+// EmailHandler handles email retrieval (works for both customer and partner)
+type EmailHandler struct {
+	otpService      *otp.OTPService
+	userRepository  *repositories.UserRepository
+	sendErrorResponse func(http.ResponseWriter, int, string, string)
+	sendJSONResponse  func(http.ResponseWriter, int, interface{})
+}
+
+// NewEmailHandler creates a new EmailHandler instance
+func NewEmailHandler(
+	otpService *otp.OTPService,
+	userRepository *repositories.UserRepository,
+	sendErrorResponse func(http.ResponseWriter, int, string, string),
+	sendJSONResponse func(http.ResponseWriter, int, interface{}),
+) *EmailHandler {
+	return &EmailHandler{
+		otpService:       otpService,
+		userRepository:   userRepository,
+		sendErrorResponse: sendErrorResponse,
+		sendJSONResponse:  sendJSONResponse,
+	}
+}
+
+// HandleGetEmail returns the email of the current authenticated user
 // OR returns email if user exists and has verified OTP (for forgot password flow)
-func (h *AuthHandler) GetEmail(w http.ResponseWriter, r *http.Request) {
+func (h *EmailHandler) HandleGetEmail(w http.ResponseWriter, r *http.Request) {
 	// First, try to get user from authenticated session
 	user, ok := auth_middleware.GetUserFromContext(r)
 	if ok {
@@ -48,15 +73,15 @@ func (h *AuthHandler) GetEmail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	email = strings.ToLower(strings.TrimSpace(email))
 
-	// Check if user exists in cache or database
-	dbUser, err := h.getUserFromCacheOrDB(ctx, email)
+	// Check if user exists in database
+	_, err := h.userRepository.GetByEmail(ctx, email)
 	if err != nil {
 		log.Printf("ERROR: User not found for email")
 		h.sendErrorResponse(w, http.StatusNotFound, "User not found", "No user found with this email address")
 		return
 	}
 
-	log.Printf("User found - ID: %d", dbUser.ID)
+	log.Printf("User found for email")
 
 	// Check if reset token exists (OTP was verified)
 	valid, err := h.otpService.VerifyResetToken(ctx, email)

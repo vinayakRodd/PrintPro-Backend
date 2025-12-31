@@ -3,6 +3,8 @@ package routes
 import (
 	"net/http"
 	"print-pro-backend/internal/api/handlers/auth_handler"
+	"print-pro-backend/internal/api/handlers/auth_handler/customer"
+	"print-pro-backend/internal/api/handlers/auth_handler/partner"
 	"print-pro-backend/internal/middleware/rate_limiter"
 )
 
@@ -14,22 +16,23 @@ func RegisterAuthRoutes(
 	corsHandler func(http.HandlerFunc) http.HandlerFunc,
 ) {
 	// Public registration routes (Identity-Profile pattern)
-	http.HandleFunc("/api/auth/register/partner", corsHandler(rateLimiter.LimitMiddleware(authHandler.RegisterPartner)))
-	http.HandleFunc("/api/auth/register/customer", corsHandler(rateLimiter.LimitMiddleware(authHandler.RegisterCustomer)))
+	// Partner and customer handlers are now in their respective packages
+	http.HandleFunc("/api/auth/register/partner", corsHandler(rateLimiter.LimitMiddleware(partner.RegisterPartner(authHandler.PartnerAuthHandler))))
+	http.HandleFunc("/api/auth/register/customer", corsHandler(rateLimiter.LimitMiddleware(customer.RegisterCustomer(authHandler.CustomerAuthHandler))))
 	
 	// Legacy registration route (deprecated - use /register/partner or /register/customer)
 	http.HandleFunc("/api/auth/register", corsHandler(rateLimiter.LimitMiddleware(authHandler.Register)))
 	
 	// Public auth routes (no authentication required)
 	// Separate login endpoints for partners and customers (with validation)
-	http.HandleFunc("/api/auth/login/partner", corsHandler(rateLimiter.LimitMiddleware(authHandler.LoginPartner)))
-	http.HandleFunc("/api/auth/login/customer", corsHandler(rateLimiter.LimitMiddleware(authHandler.LoginCustomer)))
+	http.HandleFunc("/api/auth/login/partner", corsHandler(rateLimiter.LimitMiddleware(partner.LoginPartner(authHandler.PartnerAuthHandler))))
+	http.HandleFunc("/api/auth/login/customer", corsHandler(rateLimiter.LimitMiddleware(customer.LoginCustomer(authHandler.CustomerAuthHandler))))
 	// Legacy unified login endpoint (deprecated - use /login/partner or /login/customer)
 	http.HandleFunc("/api/auth/login", corsHandler(rateLimiter.LimitMiddleware(authHandler.Login)))
 	
 	// Separate Google Sign-In endpoints for partners and customers (with validation)
-	http.HandleFunc("/api/auth/google/signin/partner", corsHandler(rateLimiter.LimitMiddleware(authHandler.GoogleSignInPartner)))
-	http.HandleFunc("/api/auth/google/signin/customer", corsHandler(rateLimiter.LimitMiddleware(authHandler.GoogleSignInCustomer)))
+	http.HandleFunc("/api/auth/google/signin/partner", corsHandler(rateLimiter.LimitMiddleware(partner.GoogleSignInPartner(authHandler.PartnerAuthHandler))))
+	http.HandleFunc("/api/auth/google/signin/customer", corsHandler(rateLimiter.LimitMiddleware(customer.GoogleSignInCustomer(authHandler.CustomerAuthHandler))))
 	// Legacy unified Google Sign-In endpoint (deprecated - use /google/signin/partner or /google/signin/customer)
 	http.HandleFunc("/api/auth/google/signin", corsHandler(rateLimiter.LimitMiddleware(authHandler.GoogleSignIn)))
 	http.HandleFunc("/api/auth/logout", corsHandler(rateLimiter.LimitMiddleware(authHandler.Logout)))

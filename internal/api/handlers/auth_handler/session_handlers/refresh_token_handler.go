@@ -31,6 +31,7 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	}
 
 	// Get refresh token from cookie
+	// SECURITY: Never log the actual token value - only log status messages
 	cookie, err := r.Cookie("refresh_token")
 	if err != nil || cookie.Value == "" {
 		log.Printf("❌ REFRESH: Refresh token cookie not found")
@@ -41,6 +42,7 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	refreshToken := cookie.Value
 	ctx := r.Context()
 	log.Printf("🔍 REFRESH: Refresh token found in cookie, validating...")
+	// SECURITY NOTE: refreshToken variable contains sensitive data - never log it
 
 	// Validate refresh token JWT
 	claims, err := h.jwtService.ValidateRefreshToken(refreshToken)
@@ -72,6 +74,7 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 
 	log.Printf("✅ REFRESH: New access token generated successfully for user: %s", claims.UserID)
 	log.Printf("🎉 REFRESH: Token refresh completed - user can continue without re-login")
+	// SECURITY NOTE: newAccessToken contains sensitive data - never log it, only return in response
 
 	// Return new access token
 	sendJSONResponse(w, http.StatusOK, map[string]interface{}{

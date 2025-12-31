@@ -34,6 +34,7 @@ func AuthMiddleware(sessionService *session.SessionService, jwtService *jwt.JWTS
 			}
 
 			accessToken := parts[1]
+			// SECURITY: Never log the actual token value - only log validation status
 
 			// Validate JWT access token
 			log.Printf("🔍 AUTH: Validating access token...")

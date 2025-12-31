@@ -1,4 +1,4 @@
-package auth_handler
+package shared
 
 import (
 	"encoding/json"
@@ -6,10 +6,35 @@ import (
 	"net/http"
 	"strings"
 	"print-pro-backend/internal/models"
+	"print-pro-backend/internal/services/email"
+	"print-pro-backend/internal/services/otp"
 )
 
-// ForgotPassword handles password reset request - sends OTP to email
-func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+// ForgotPasswordHandler handles password reset request - sends OTP to email (works for both customer and partner)
+type ForgotPasswordHandler struct {
+	otpService      *otp.OTPService
+	emailService    *email.EmailService
+	sendErrorResponse func(http.ResponseWriter, int, string, string)
+	sendJSONResponse  func(http.ResponseWriter, int, interface{})
+}
+
+// NewForgotPasswordHandler creates a new ForgotPasswordHandler instance
+func NewForgotPasswordHandler(
+	otpService *otp.OTPService,
+	emailService *email.EmailService,
+	sendErrorResponse func(http.ResponseWriter, int, string, string),
+	sendJSONResponse func(http.ResponseWriter, int, interface{}),
+) *ForgotPasswordHandler {
+	return &ForgotPasswordHandler{
+		otpService:       otpService,
+		emailService:     emailService,
+		sendErrorResponse: sendErrorResponse,
+		sendJSONResponse:  sendJSONResponse,
+	}
+}
+
+// HandleForgotPassword handles password reset request - sends OTP to email
+func (h *ForgotPasswordHandler) HandleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Forgot password endpoint hit - Method: %s, URL: %s", r.Method, r.URL.Path)
 	
 	if r.Method != http.MethodPost {
@@ -41,7 +66,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	
 	log.Printf("Generating OTP")
 	// Generate OTP
-	otp, err := h.otpService.GenerateOTP(ctx, email)
+	otpCode, err := h.otpService.GenerateOTP(ctx, email)
 	if err != nil {
 		log.Printf("ERROR: Failed to generate OTP: %v", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate OTP", err.Error())
@@ -60,7 +85,7 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Printf("SUCCESS: OTP email sent successfully (async)")
 		}
-	}(email, otp)
+	}(email, otpCode)
 
 	log.Printf("OTP generated and email sending initiated (async)")
 
