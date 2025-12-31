@@ -108,7 +108,7 @@ func (h *AuthHandler) RegisterPartner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate tokens and set cookies
-	accessToken, _, err := h.generateTokensAndSetCookies(w, registeredUser.ID, registeredUser.Email, accountRecord.UserType, ctx)
+	accessToken, _, err := h.tokenHelper.GenerateTokensAndSetCookies(w, registeredUser.ID, registeredUser.Email, accountRecord.UserType, ctx)
 	if err != nil {
 		return // Error already handled in generateTokensAndSetCookies
 	}
@@ -215,7 +215,7 @@ func (h *AuthHandler) RegisterCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate tokens and set cookies
-	accessToken, _, err := h.generateTokensAndSetCookies(w, registeredUser.ID, registeredUser.Email, accountRecord.UserType, ctx)
+	accessToken, _, err := h.tokenHelper.GenerateTokensAndSetCookies(w, registeredUser.ID, registeredUser.Email, accountRecord.UserType, ctx)
 	if err != nil {
 		return // Error already handled in generateTokensAndSetCookies
 	}
