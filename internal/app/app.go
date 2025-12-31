@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"print-pro-backend/internal/api/handlers/auth_handler"
 	"print-pro-backend/internal/api/handlers/health"
+	"print-pro-backend/internal/api/handlers/printer_handler"
 	"print-pro-backend/internal/api/routes"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
@@ -59,8 +60,16 @@ func NewApp(cfg *config.Config) (*Application, error) {
 
 // RegisterRoutes registers all application routes
 func (a *Application) RegisterRoutes() {
+	// Initialize printer handler
+	printerHandler := printer_handler.NewPrinterHandler(
+		a.repositories.PrinterRepository,
+		a.repositories.PartnerProfileRepository,
+		a.redisClient,
+	)
+
 	routes.RegisterRoutes(
 		a.authHandler,
+		printerHandler,
 		a.services.RateLimiter,
 		a.authMiddlewareFunc,
 		cors.CORS,
