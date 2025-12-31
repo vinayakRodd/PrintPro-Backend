@@ -16,8 +16,8 @@ import (
 
 // ResetPasswordHandler handles password reset with OTP verification (works for both customer and partner)
 type ResetPasswordHandler struct {
-	otpService      *otp.OTPService
-	userRepository  *repositories.UserRepository
+	otpService        *otp.OTPService
+	accountRepository *repositories.AccountRepository
 	sendErrorResponse func(http.ResponseWriter, int, string, string)
 	sendJSONResponse  func(http.ResponseWriter, int, interface{})
 }
@@ -25,15 +25,15 @@ type ResetPasswordHandler struct {
 // NewResetPasswordHandler creates a new ResetPasswordHandler instance
 func NewResetPasswordHandler(
 	otpService *otp.OTPService,
-	userRepository *repositories.UserRepository,
+	accountRepository *repositories.AccountRepository,
 	sendErrorResponse func(http.ResponseWriter, int, string, string),
 	sendJSONResponse func(http.ResponseWriter, int, interface{}),
 ) *ResetPasswordHandler {
 	return &ResetPasswordHandler{
-		otpService:       otpService,
-		userRepository:   userRepository,
-		sendErrorResponse: sendErrorResponse,
-		sendJSONResponse:  sendJSONResponse,
+		otpService:        otpService,
+		accountRepository: accountRepository,
+		sendErrorResponse:  sendErrorResponse,
+		sendJSONResponse:   sendJSONResponse,
 	}
 }
 
@@ -107,19 +107,28 @@ func (h *ResetPasswordHandler) HandleResetPassword(w http.ResponseWriter, r *htt
 		return
 	}
 	
-	// Check if user exists
-	user, err := h.userRepository.GetByEmail(ctx, email)
+	// Check if account exists in accounts table
+	account, err := h.accountRepository.GetByEmail(ctx, email)
 	if err != nil {
-		log.Printf("ERROR: User not found - %v", err)
-		h.sendErrorResponse(w, http.StatusNotFound, "User not found", "User with this email does not exist")
+		log.Printf("ERROR: Account not found - %v", err)
+		h.sendErrorResponse(w, http.StatusNotFound, "Account not found", "Account with this email does not exist")
+		return
+	}
+
+	// Check if account is OAuth-only (can't reset password for OAuth accounts)
+	if account.PasswordHash == "oauth_google" {
+		log.Printf("ERROR: Attempted password reset for OAuth-only account")
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid operation", "This account uses Google Sign-In only. Password reset is not available for OAuth accounts.")
 		return
 	}
 
 	// Check if new password is same as current password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err == nil {
-		log.Printf("ERROR: New password is same as current password")
-		h.sendErrorResponse(w, http.StatusBadRequest, "Current password is same as new password", "Please choose a different password")
-		return
+	if account.PasswordHash != "" {
+		if err := bcrypt.CompareHashAndPassword([]byte(account.PasswordHash), []byte(password)); err == nil {
+			log.Printf("ERROR: New password is same as current password")
+			h.sendErrorResponse(w, http.StatusBadRequest, "Current password is same as new password", "Please choose a different password")
+			return
+		}
 	}
 
 	// Hash the new password
@@ -130,8 +139,8 @@ func (h *ResetPasswordHandler) HandleResetPassword(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Update password in database
-	if err := h.userRepository.UpdatePassword(ctx, email, string(hashedPassword)); err != nil {
+	// Update password in accounts table
+	if err := h.accountRepository.UpdatePassword(ctx, email, string(hashedPassword)); err != nil {
 		log.Printf("ERROR: Failed to update password in database - %v", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to update password", err.Error())
 		return
