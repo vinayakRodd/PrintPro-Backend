@@ -8,6 +8,7 @@ import (
 	"print-pro-backend/internal/api/handlers/auth_handler"
 	"print-pro-backend/internal/api/handlers/health"
 	"print-pro-backend/internal/api/handlers/printer_handler"
+	"print-pro-backend/internal/api/handlers/partner_agent"
 	"print-pro-backend/internal/api/handlers/test_print"
 	print_handler "print-pro-backend/internal/api/handlers/test_print/print-handler"
 	"print-pro-backend/internal/api/routes"
@@ -96,7 +97,16 @@ func (a *Application) RegisterRoutes() {
 		log.Printf("WARNING: Failed to create test-print directory: %v", err)
 	}
 
-	printHandler := print_handler.NewPrintHandler(testPrintDir)
+	// Initialize partner agent handler
+	archiveDir := filepath.Join(testPrintDir, "archived")
+	readyDir := filepath.Join(testPrintDir, "ready")
+	processingDir := filepath.Join(testPrintDir, "processing")
+	os.MkdirAll(archiveDir, 0755)      // Create archive directory
+	os.MkdirAll(readyDir, 0755)        // Create ready directory (only files explicitly requested for printing)
+	os.MkdirAll(processingDir, 0755)  // Create processing directory
+	agentHandler := partner_agent.NewAgentHandler(testPrintDir, archiveDir, a.redisClient)
+
+	printHandler := print_handler.NewPrintHandler(testPrintDir, agentHandler)
 	uploadHandler := test_print.NewUploadHandler(testPrintDir)
 
 	// Register test print routes
@@ -104,6 +114,12 @@ func (a *Application) RegisterRoutes() {
 	http.HandleFunc("/api/test-print/list", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListFiles))))
 	http.HandleFunc("/api/test-print/printers", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListPrinters))))
 	http.HandleFunc("/api/test-print/print", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PrintFile))))
+	http.HandleFunc("/api/test-print/queue", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.QueueFile))))
+
+	// Register partner agent routes (no auth required - agent will authenticate separately)
+	http.HandleFunc("/api/partner-agent/fetch-job", cors.CORS(agentHandler.FetchJob))
+	http.HandleFunc("/api/partner-agent/confirm", cors.CORS(agentHandler.ConfirmPrint))
+	http.HandleFunc("/api/partner-agent/sync-printers", cors.CORS(agentHandler.SyncPrinters))
 }
 
 // Close gracefully shuts down the application by closing Redis and PostgreSQL connections
