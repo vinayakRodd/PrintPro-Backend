@@ -9,6 +9,7 @@ import (
 	"print-pro-backend/internal/api/handlers/health"
 	"print-pro-backend/internal/api/handlers/printer_handler"
 	"print-pro-backend/internal/api/handlers/test_print"
+	print_handler "print-pro-backend/internal/api/handlers/test_print/print-handler"
 	"print-pro-backend/internal/api/routes"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
@@ -95,7 +96,7 @@ func (a *Application) RegisterRoutes() {
 		log.Printf("WARNING: Failed to create test-print directory: %v", err)
 	}
 
-	printHandler := test_print.NewPrintHandler(testPrintDir)
+	printHandler := print_handler.NewPrintHandler(testPrintDir)
 	uploadHandler := test_print.NewUploadHandler(testPrintDir)
 
 	// Register test print routes
