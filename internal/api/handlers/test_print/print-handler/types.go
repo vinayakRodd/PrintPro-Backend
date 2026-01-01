@@ -1,14 +1,18 @@
 package print_handler
 
+import "print-pro-backend/internal/api/handlers/partner_agent"
+
 // PrintHandler handles print requests from partners
 type PrintHandler struct {
-	uploadDir string
+	uploadDir   string
+	agentHandler *partner_agent.AgentHandler
 }
 
 // NewPrintHandler creates a new print handler
-func NewPrintHandler(uploadDir string) *PrintHandler {
+func NewPrintHandler(uploadDir string, agentHandler *partner_agent.AgentHandler) *PrintHandler {
 	return &PrintHandler{
-		uploadDir: uploadDir,
+		uploadDir:    uploadDir,
+		agentHandler: agentHandler,
 	}
 }
 

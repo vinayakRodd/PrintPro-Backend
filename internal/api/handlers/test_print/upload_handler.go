@@ -45,13 +45,35 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check Content-Type header
+	contentType := r.Header.Get("Content-Type")
+	log.Printf("DEBUG: Upload request - Method: %s, Content-Type: %s, Content-Length: %s", 
+		r.Method, contentType, r.Header.Get("Content-Length"))
+	
+	// Check if Content-Type is multipart/form-data (must start with "multipart/form-data")
+	if contentType == "" {
+		log.Printf("ERROR: Missing Content-Type header")
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid request", "Missing Content-Type header. Request must be multipart/form-data.")
+		return
+	}
+	
+	if !strings.HasPrefix(contentType, "multipart/form-data") {
+		log.Printf("ERROR: Invalid Content-Type - Expected multipart/form-data, got: %s", contentType)
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid Content-Type", 
+			fmt.Sprintf("Request must be multipart/form-data. Received: %s. Please use FormData in your frontend.", contentType))
+		return
+	}
+	
 	// Parse multipart form (max 10MB)
 	err := r.ParseMultipartForm(10 << 20) // 10MB
 	if err != nil {
-		log.Printf("ERROR: Failed to parse multipart form - %v", err)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid form data", "Failed to parse form: "+err.Error())
+		log.Printf("ERROR: Failed to parse multipart form - Content-Type: %s, Error: %v", contentType, err)
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid form data", 
+			fmt.Sprintf("Failed to parse multipart form. Content-Type: %s. Error: %v", contentType, err))
 		return
 	}
+	
+	log.Printf("DEBUG: Multipart form parsed successfully")
 
 	// Get file from form
 	file, header, err := r.FormFile("file")
