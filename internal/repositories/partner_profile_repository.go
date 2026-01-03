@@ -72,3 +72,75 @@ func (r *PartnerProfileRepository) GetByPrinterID(ctx context.Context, printerID
 	return &p, nil
 }
 
+// ShopNameResult represents a shop name result
+type ShopNameResult struct {
+	ShopName string
+	ID       int64
+}
+
+// GetByShopName retrieves a partner profile by shop name
+func (r *PartnerProfileRepository) GetByShopName(ctx context.Context, shopName string) (*partner_profile.PartnerProfile, error) {
+	var p partner_profile.PartnerProfile
+	err := r.db.QueryRow(ctx,
+		"SELECT id, account_id, shop_name, printer_id FROM partner_profiles WHERE shop_name = $1",
+		shopName,
+	).Scan(&p.ID, &p.AccountID, &p.ShopName, &p.PrinterID)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("partner profile not found for shop name: %s", shopName)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get partner profile by shop name: %w", err)
+	}
+
+	return &p, nil
+}
+
+// GetPartnerIDByShopName gets the partner_profiles.id using shop_name
+// print_jobs.partner_id should reference partner_profiles.id
+func (r *PartnerProfileRepository) GetPartnerIDByShopName(ctx context.Context, shopName string) (int64, error) {
+	var partnerID int64
+	err := r.db.QueryRow(ctx,
+		`SELECT id 
+		 FROM partner_profiles 
+		 WHERE shop_name = $1`,
+		shopName,
+	).Scan(&partnerID)
+
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("partner profile not found for shop name: %s", shopName)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to get partner ID by shop name: %w", err)
+	}
+
+	return partnerID, nil
+}
+
+// GetAllShopNames retrieves all shop names from partner_profiles table
+func (r *PartnerProfileRepository) GetAllShopNames(ctx context.Context) ([]ShopNameResult, error) {
+	rows, err := r.db.Query(ctx,
+		"SELECT id, shop_name FROM partner_profiles ORDER BY shop_name ASC",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get shop names: %w", err)
+	}
+	defer rows.Close()
+
+	var shops []ShopNameResult
+
+	for rows.Next() {
+		var shop ShopNameResult
+		if err := rows.Scan(&shop.ID, &shop.ShopName); err != nil {
+			return nil, fmt.Errorf("failed to scan shop name: %w", err)
+		}
+		shops = append(shops, shop)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating shop names: %w", err)
+	}
+
+	return shops, nil
+}
+

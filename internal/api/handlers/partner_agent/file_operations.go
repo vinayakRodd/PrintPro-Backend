@@ -11,6 +11,7 @@ import (
 
 // QueueJobForAgent queues a PDF file to the ready folder and pushes filename to Redis list
 // This is called when a new PDF is uploaded
+// If the file is already in the ready folder, it only pushes to Redis (no copy)
 func (h *AgentHandler) QueueJobForAgent(sourceFilePath string) error {
 	// Ensure ready directory exists
 	if err := os.MkdirAll(h.readyDir, 0755); err != nil {
@@ -20,25 +21,33 @@ func (h *AgentHandler) QueueJobForAgent(sourceFilePath string) error {
 	fileName := filepath.Base(sourceFilePath)
 	targetPath := filepath.Join(h.readyDir, fileName)
 
-	// Open source file
-	sourceFile, err := os.Open(sourceFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to open source file: %v", err)
-	}
-	defer sourceFile.Close()
+	// Check if file is already in ready folder (same path)
+	// If so, skip copying and just push to Redis
+	if sourceFilePath == targetPath {
+		log.Printf("INFO: File is already in ready folder, skipping copy - File: %s", fileName)
+	} else {
+		// File is not in ready folder, copy it there
+		// Open source file
+		sourceFile, err := os.Open(sourceFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to open source file: %v", err)
+		}
+		defer sourceFile.Close()
 
-	// Create destination file in ready folder
-	destFile, err := os.Create(targetPath)
-	if err != nil {
-		return fmt.Errorf("failed to create destination file: %v", err)
-	}
-	defer destFile.Close()
+		// Create destination file in ready folder
+		destFile, err := os.Create(targetPath)
+		if err != nil {
+			return fmt.Errorf("failed to create destination file: %v", err)
+		}
+		defer destFile.Close()
 
-	// Copy file content to ready folder
-	_, err = io.Copy(destFile, sourceFile)
-	if err != nil {
-		os.Remove(targetPath) // Clean up on error
-		return fmt.Errorf("failed to copy file: %v", err)
+		// Copy file content to ready folder
+		_, err = io.Copy(destFile, sourceFile)
+		if err != nil {
+			os.Remove(targetPath) // Clean up on error
+			return fmt.Errorf("failed to copy file: %v", err)
+		}
+		log.Printf("INFO: File copied to ready folder - File: %s", fileName)
 	}
 
 	// Push filename to Redis ready queue (only if not already there to avoid duplicates)

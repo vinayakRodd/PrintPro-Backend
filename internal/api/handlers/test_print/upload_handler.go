@@ -9,25 +9,36 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
+	"print-pro-backend/internal/repositories"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // UploadHandler handles file uploads from customers
 type UploadHandler struct {
-	uploadDir    string
-	agentHandler interface {
+	uploadDir              string
+	agentHandler           interface {
 		QueueJobForAgent(sourceFilePath string) error
 	}
+	partnerProfileRepository *repositories.PartnerProfileRepository
+	printJobRepository       *repositories.PrintJobRepository
 }
 
 // NewUploadHandler creates a new upload handler
-func NewUploadHandler(uploadDir string, agentHandler interface {
-	QueueJobForAgent(sourceFilePath string) error
-}) *UploadHandler {
+func NewUploadHandler(
+	uploadDir string,
+	agentHandler interface {
+		QueueJobForAgent(sourceFilePath string) error
+	},
+	partnerProfileRepository *repositories.PartnerProfileRepository,
+	printJobRepository *repositories.PrintJobRepository,
+) *UploadHandler {
 	return &UploadHandler{
-		uploadDir:    uploadDir,
-		agentHandler: agentHandler,
+		uploadDir:                uploadDir,
+		agentHandler:             agentHandler,
+		partnerProfileRepository: partnerProfileRepository,
+		printJobRepository:       printJobRepository,
 	}
 }
 
@@ -81,6 +92,43 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	
 	log.Printf("DEBUG: Multipart form parsed successfully")
 
+	// Get shop_name from form (required)
+	shopName := strings.TrimSpace(r.FormValue("shop_name"))
+	if shopName == "" {
+		log.Printf("ERROR: Missing shop_name in form")
+		h.sendErrorResponse(w, http.StatusBadRequest, "Shop name required", "Please provide a shop_name in the form")
+		return
+	}
+
+	// Get optional print job parameters from form
+	pType := strings.TrimSpace(r.FormValue("p_type"))
+	var pTypePtr *string
+	if pType != "" {
+		pTypePtr = &pType
+	}
+
+	// Parse color (default: false)
+	colorStr := strings.TrimSpace(strings.ToLower(r.FormValue("color")))
+	var colorPtr *bool
+	if colorStr != "" {
+		color := colorStr == "true" || colorStr == "1" || colorStr == "yes"
+		colorPtr = &color
+	}
+
+	// Parse num_copies (default: 1)
+	numCopiesStr := strings.TrimSpace(r.FormValue("num_copies"))
+	var numCopiesPtr *int
+	if numCopiesStr != "" {
+		if numCopies, err := strconv.Atoi(numCopiesStr); err == nil && numCopies > 0 {
+			numCopiesPtr = &numCopies
+		} else {
+			log.Printf("WARNING: Invalid num_copies value '%s', using default (1)", numCopiesStr)
+		}
+	}
+
+	log.Printf("DEBUG: Upload request - Shop: %s, Customer: %s, PType: %v, Color: %v, NumCopies: %v", 
+		shopName, user.ID, pTypePtr, colorPtr, numCopiesPtr)
+
 	// Get file from form
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -107,23 +155,47 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	nameWithoutExt = strings.ReplaceAll(nameWithoutExt, "\\", "_")
 	
 	// Create unique filename: timestamp_userid_originalname
+	// Use nanosecond precision to ensure uniqueness even if multiple uploads happen simultaneously
 	timestamp := time.Now().Format("20060102_150405")
-	filename := fmt.Sprintf("%s_%s_%s%s", timestamp, user.ID, nameWithoutExt, ext)
+	nanos := time.Now().Nanosecond()
+	filename := fmt.Sprintf("%s_%d_%s_%s%s", timestamp, nanos, user.ID, nameWithoutExt, ext)
 
 	// Save file directly to ready folder (as per requirements)
-	// QueueJobForAgent will handle copying to ready folder and pushing to Redis
-	// Build temporary file path first (in uploadDir)
-	tempFilePath := filepath.Join(h.uploadDir, filename)
+	readyDir := filepath.Join(h.uploadDir, "ready")
+	finalFilePath := filepath.Join(readyDir, filename)
 
-	// Create upload directory if it doesn't exist (for temp file)
-	if err := os.MkdirAll(h.uploadDir, 0755); err != nil {
-		log.Printf("ERROR: Failed to create upload directory - %v", err)
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to create upload directory")
+	// Create ready directory if it doesn't exist
+	if err := os.MkdirAll(readyDir, 0755); err != nil {
+		log.Printf("ERROR: Failed to create ready directory - %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to create ready directory")
 		return
 	}
 
-	// Create temporary file on disk
-	dst, err := os.Create(tempFilePath)
+	// Check if file already exists (collision detection)
+	// If it exists, append a counter to make it unique
+	counter := 1
+	originalFinalFilePath := finalFilePath
+	for {
+		if _, err := os.Stat(finalFilePath); os.IsNotExist(err) {
+			// File doesn't exist, we can use this filename
+			break
+		}
+		// File exists, try with counter suffix
+		ext := filepath.Ext(filename)
+		nameWithoutExt := strings.TrimSuffix(filename, ext)
+		filename = fmt.Sprintf("%s_%d%s", nameWithoutExt, counter, ext)
+		finalFilePath = filepath.Join(readyDir, filename)
+		counter++
+		// Safety limit to prevent infinite loop
+		if counter > 1000 {
+			log.Printf("ERROR: Too many filename collisions for %s", originalFinalFilePath)
+			h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to generate unique filename")
+			return
+		}
+	}
+
+	// Create file directly in ready folder
+	dst, err := os.Create(finalFilePath)
 	if err != nil {
 		log.Printf("ERROR: Failed to create file - %v", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to save file")
@@ -131,38 +203,74 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dst.Close()
 
-	// Copy file content to temporary location
+	// Copy file content directly to ready folder
 	_, err = io.Copy(dst, file)
 	if err != nil {
 		log.Printf("ERROR: Failed to write file - %v", err)
-		os.Remove(tempFilePath) // Clean up on error
+		os.Remove(finalFilePath) // Clean up on error
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to save file")
 		return
 	}
 
-	// Queue job to ready folder and push to Redis
-	// This will copy file to ready folder and push filename to Redis list
+	// Push filename to Redis ready queue (if agent handler is available)
 	if h.agentHandler != nil {
-		if err := h.agentHandler.QueueJobForAgent(tempFilePath); err != nil {
-			log.Printf("ERROR: Failed to queue job to ready folder: %v", err)
-			os.Remove(tempFilePath) // Clean up temp file on error
-			h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to queue file: "+err.Error())
-			return
+		// QueueJobForAgent will push to Redis, but file is already in ready folder
+		// So we just need to push to Redis queue
+		if err := h.agentHandler.QueueJobForAgent(finalFilePath); err != nil {
+			log.Printf("ERROR: Failed to queue job in Redis: %v (file is saved but not queued)", err)
+			// Don't fail the upload, file is already saved
 		}
-		// Remove temp file after successful copy to ready folder
-		os.Remove(tempFilePath)
-	} else {
-		// If no agent handler, keep file in uploadDir (fallback)
-		log.Printf("WARNING: No agent handler available, file saved to upload directory only")
 	}
 
-	log.Printf("SUCCESS: File uploaded - Customer: %s, File: %s, Size: %d bytes", user.ID, filename, header.Size)
+	// Get partner_id from shop_name
+	ctx := r.Context()
+	partnerID, err := h.partnerProfileRepository.GetPartnerIDByShopName(ctx, shopName)
+	if err != nil {
+		log.Printf("ERROR: Failed to get partner ID for shop '%s' - %v", shopName, err)
+		// Don't fail the upload, but log the error
+		log.Printf("WARNING: Print job not created in database due to partner lookup failure")
+	} else {
+		// Convert user.ID (string) to int64 for account_id
+		accountID, err := strconv.ParseInt(user.ID, 10, 64)
+		if err != nil {
+			log.Printf("WARNING: Failed to parse user ID '%s' - %v", user.ID, err)
+			accountID = 0
+		}
+
+		// Build file URL/path - use absolute file path
+		absFilePath, _ := filepath.Abs(finalFilePath)
+		fileURL := absFilePath
+		if fileURL == "" {
+			// Fallback to relative path if absolute path fails
+			fileURL = fmt.Sprintf("/api/test-print/preview?filename=%s", filename)
+		}
+
+		// Create print job in database
+		var accountIDPtr *int64
+		if accountID > 0 {
+			accountIDPtr = &accountID
+		}
+		
+		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr)
+		if err != nil {
+			log.Printf("ERROR: Failed to create print job in database - %v", err)
+			// Don't fail the upload, but log the error
+			log.Printf("WARNING: File uploaded but print job not created in database")
+		} else {
+			log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s, Shop: %s, File: %s, PType: %v, Color: %v, NumCopies: %v", 
+				printJob.ID, user.ID, shopName, filename, printJob.PType, printJob.Color, printJob.NumCopies)
+		}
+	}
+
+	log.Printf("SUCCESS: File uploaded - Customer: %s, Shop: %s, File: %s, Size: %d bytes", 
+		user.ID, shopName, filename, header.Size)
 
 	// Return success response
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"success":  true,
 		"message":  "File uploaded successfully",
 		"filename": filename,
+		"shop_name": shopName,
 		"size":     header.Size,
 	})
 }

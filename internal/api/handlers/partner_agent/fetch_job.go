@@ -66,10 +66,36 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set headers so the agent knows the filename
+	// Look up print job from database to get print parameters
+	var colorValue bool = false // Default to black & white
+	var numCopiesValue int = 1   // Default to 1 copy
+	
+	if h.printJobRepo != nil {
+		printJob, err := h.printJobRepo.GetByFilename(ctx, fileName)
+		if err != nil {
+			log.Printf("WARNING: Failed to get print job for filename '%s': %v (using defaults: color=false, copies=1)", fileName, err)
+		} else {
+			// Use values from database, with defaults if nil
+			if printJob.Color != nil {
+				colorValue = *printJob.Color
+			}
+			if printJob.NumCopies != nil {
+				numCopiesValue = *printJob.NumCopies
+			}
+			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d", fileName, colorValue, numCopiesValue)
+		}
+	} else {
+		log.Printf("WARNING: PrintJobRepository not available, using defaults (color=false, copies=1)")
+	}
+
+	// Set headers so the agent knows the filename and print parameters
 	// Python script expects X-File-Name header
 	w.Header().Set("X-File-Name", fileName)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+	
+	// Send print parameters as headers for partner agent
+	w.Header().Set("X-Print-Color", fmt.Sprintf("%v", colorValue))      // "true" or "false"
+	w.Header().Set("X-Print-Copies", fmt.Sprintf("%d", numCopiesValue)) // Number of copies
 	
 	// Set content type based on file extension
 	if filepath.Ext(fileName) == ".ps" {

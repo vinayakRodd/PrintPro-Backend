@@ -51,4 +51,4 @@ yarn.lock
 
 # Test print uploads folder - contains user uploaded files
 test-print/
-
+docs/

@@ -1,9 +1,11 @@
 package partner_agent
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 	"print-pro-backend/internal/infrastructure"
+	"print-pro-backend/internal/models/printjob"
 )
 
 // ConfirmRequest represents the request to confirm a print job
@@ -20,6 +22,11 @@ type SyncPrintersRequest struct {
 	Printers interface{} `json:"printers"` // Can be []string or []map[string]interface{}
 }
 
+// PrintJobRepository interface for getting print job by filename
+type PrintJobRepository interface {
+	GetByFilename(ctx context.Context, filename string) (*printjob.PrintJob, error)
+}
+
 // AgentHandler handles requests from partner agent
 type AgentHandler struct {
 	readyDir       string  // Only files explicitly requested for printing go here
@@ -28,10 +35,11 @@ type AgentHandler struct {
 	redisClient    *infrastructure.RedisClient
 	syncedPrinters []map[string]interface{}
 	printerMutex   sync.RWMutex
+	printJobRepo   PrintJobRepository
 }
 
 // NewAgentHandler creates a new agent handler
-func NewAgentHandler(baseDir, archiveDir string, redisClient *infrastructure.RedisClient) *AgentHandler {
+func NewAgentHandler(baseDir, archiveDir string, redisClient *infrastructure.RedisClient, printJobRepo PrintJobRepository) *AgentHandler {
 	readyDir := filepath.Join(baseDir, "ready")
 	processingDir := filepath.Join(baseDir, "processing")
 	return &AgentHandler{
@@ -40,5 +48,6 @@ func NewAgentHandler(baseDir, archiveDir string, redisClient *infrastructure.Red
 		processingDir: processingDir,
 		redisClient:    redisClient,
 		syncedPrinters: make([]map[string]interface{}, 0),
+		printJobRepo:   printJobRepo,
 	}
 }
