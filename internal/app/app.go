@@ -107,7 +107,7 @@ func (a *Application) RegisterRoutes() {
 	agentHandler := partner_agent.NewAgentHandler(testPrintDir, archiveDir, a.redisClient)
 
 	printHandler := print_handler.NewPrintHandler(testPrintDir, agentHandler)
-	uploadHandler := test_print.NewUploadHandler(testPrintDir)
+	uploadHandler := test_print.NewUploadHandler(testPrintDir, agentHandler)
 
 	// Register test print routes
 	http.HandleFunc("/api/test-print/upload", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(uploadHandler.UploadFile))))
@@ -115,10 +115,12 @@ func (a *Application) RegisterRoutes() {
 	http.HandleFunc("/api/test-print/printers", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListPrinters))))
 	http.HandleFunc("/api/test-print/print", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PrintFile))))
 	http.HandleFunc("/api/test-print/queue", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.QueueFile))))
+	http.HandleFunc("/api/test-print/preview", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PreviewPDF))))
 
 	// Register partner agent routes (no auth required - agent will authenticate separately)
 	http.HandleFunc("/api/partner-agent/fetch-job", cors.CORS(agentHandler.FetchJob))
-	http.HandleFunc("/api/partner-agent/confirm", cors.CORS(agentHandler.ConfirmPrint))
+	http.HandleFunc("/api/partner-agent/confirm-print", cors.CORS(agentHandler.ConfirmPrint))
+	http.HandleFunc("/api/partner-agent/confirm", cors.CORS(agentHandler.ConfirmPrint)) // Keep for backward compatibility
 	http.HandleFunc("/api/partner-agent/sync-printers", cors.CORS(agentHandler.SyncPrinters))
 }
 

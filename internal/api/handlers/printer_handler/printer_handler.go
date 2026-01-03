@@ -157,8 +157,8 @@ func (h *PrinterHandler) GetPrintersHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Convert user.ID (string) to int (account_id)
-	accountID, err := strconv.Atoi(user.ID)
+	// Convert user.ID (string) to int64 (account_id)
+	accountID, err := strconv.ParseInt(user.ID, 10, 64)
 	if err != nil {
 		fmt.Printf("❌ ERROR: Invalid account ID format: %s - %v\n", user.ID, err)
 		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "Invalid account ID format")

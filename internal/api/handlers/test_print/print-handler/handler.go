@@ -92,20 +92,20 @@ func (h *PrintHandler) PrintFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Queue PDF file for partner agent when frontend explicitly requests print
-	// Logic: Pick PDF from ready folder (by filename) → Move to processing folder (queued)
+	// Logic: Ensure file is in Redis ready queue → Agent will fetch via RPOPLPUSH
 	// The partner agent will fetch this file via /api/partner-agent/fetch-job endpoint
 	pdfFileName := filepath.Base(absFilePath)
 	
-	log.Printf("INFO: Partner requested print - Moving file from ready to processing folder - File: %s, Printer: %s", pdfFileName, req.Printer)
+	log.Printf("INFO: Partner requested print - Ensuring file is in Redis ready queue - File: %s, Printer: %s, Partner: %s", pdfFileName, req.Printer, user.ID)
 	
-	// Move file from ready folder to processing folder (queued)
+	// Ensure file is in Redis ready queue (will check for duplicates)
 	if err := h.agentHandler.MoveToProcessing(pdfFileName); err != nil {
-		log.Printf("ERROR: Failed to move file from ready to processing folder: %v", err)
+		log.Printf("ERROR: Failed to queue file in Redis: %v - File: %s, Partner: %s", err, pdfFileName, user.ID)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "File error", "Failed to queue file: "+err.Error())
 		return
 	}
 	
-	log.Printf("SUCCESS: File moved from ready to processing folder - Partner: %s, File: %s (processing, agent can now fetch)", user.ID, pdfFileName)
+	log.Printf("SUCCESS: File queued in Redis ready queue - Partner: %s, File: %s (agent can now fetch via RPOPLPUSH)", user.ID, pdfFileName)
 
 	// Return success response with processing status
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
@@ -114,97 +114,6 @@ func (h *PrintHandler) PrintFile(w http.ResponseWriter, r *http.Request) {
 		"filename": pdfFileName,
 		"printer":  req.Printer,
 		"status":   "processing",
-	})
-}
-
-// ListFiles lists all PDFs from ready and processing folders (NOT archived)
-// - Ready folder: status "ready" (show "Print" button)
-// - Processing folder: status "queued" (show "Queued" status)
-// - Archived folder: NOT shown (files already sent to agent and completed)
-func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only GET method is allowed")
-		return
-	}
-
-	// Get user from context
-	user, ok := auth_middleware.GetUserFromContext(r)
-	if !ok {
-		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not found in session")
-		return
-	}
-
-	// Verify user is a partner
-	if user.UserType != "partner" {
-		h.sendErrorResponse(w, http.StatusForbidden, "Forbidden", "Only partners can list files")
-		return
-	}
-
-	readyDir := h.agentHandler.GetReadyDir()
-	processingDir := h.agentHandler.GetProcessingDir()
-	
-	// Ensure directories exist
-	os.MkdirAll(readyDir, 0755)
-	os.MkdirAll(processingDir, 0755)
-	
-	fileList := []map[string]interface{}{}
-	readyCount := 0
-	queuedCount := 0
-
-	// Read from ready folder (status: "ready" - show Print button)
-	readyFiles, err := os.ReadDir(readyDir)
-	if err == nil {
-		for _, file := range readyFiles {
-			if file.IsDir() || strings.ToLower(filepath.Ext(file.Name())) != ".pdf" {
-				continue
-			}
-
-			info, err := file.Info()
-			if err != nil {
-				continue
-			}
-
-			fileList = append(fileList, map[string]interface{}{
-				"filename":    file.Name(),
-				"size":        info.Size(),
-				"modified_at": info.ModTime().Format("2006-01-02T15:04:05Z07:00"),
-				"status":      "ready", // Status: ready to print (show Print button)
-			})
-			readyCount++
-		}
-	}
-
-	// Read from processing folder (status: "processing" - show Processing status)
-	processingFiles, err := os.ReadDir(processingDir)
-	if err == nil {
-		for _, file := range processingFiles {
-			if file.IsDir() || strings.ToLower(filepath.Ext(file.Name())) != ".pdf" {
-				continue
-			}
-
-			info, err := file.Info()
-			if err != nil {
-				continue
-			}
-
-			fileList = append(fileList, map[string]interface{}{
-				"filename":    file.Name(),
-				"size":        info.Size(),
-				"modified_at": info.ModTime().Format("2006-01-02T15:04:05Z07:00"),
-				"status":      "processing", // Status: processing (show Processing button/status)
-			})
-			queuedCount++
-		}
-	}
-
-	log.Printf("SUCCESS: Files listed - Partner: %s, Ready: %d, Processing: %d, Total: %d", 
-		user.ID, readyCount, queuedCount, len(fileList))
-
-	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"files":   fileList,
-		"count":   len(fileList),
-		"message": "PDFs from ready and processing folders",
 	})
 }
 
@@ -267,121 +176,4 @@ func (h *PrintHandler) QueueFile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ListPrinters lists all available printers from the synced partner agent list
-func (h *PrintHandler) ListPrinters(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only GET method is allowed")
-		return
-	}
-
-	// Get user from context
-	user, ok := auth_middleware.GetUserFromContext(r)
-	if !ok {
-		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not found in session")
-		return
-	}
-
-	// Verify user is a partner
-	if user.UserType != "partner" {
-		h.sendErrorResponse(w, http.StatusForbidden, "Forbidden", "Only partners can list printers")
-		return
-	}
-
-	// Get synced printer list from partner agent (instead of detecting locally)
-	printers := h.agentHandler.GetSyncedPrinters()
-
-	log.Printf("DEBUG: ListPrinters called - Partner: %s, Printer count: %d", user.ID, len(printers))
-	
-	// Print the entire printer list being sent to frontend
-	if len(printers) > 0 {
-		log.Printf("=========================================")
-		log.Printf("PRINTER LIST BEING SENT TO FRONTEND:")
-		log.Printf("=========================================")
-		for i, printer := range printers {
-			log.Printf("Printer #%d:", i+1)
-			printerJSON, _ := json.MarshalIndent(printer, "  ", "  ")
-			log.Printf("  %s", string(printerJSON))
-		}
-		log.Printf("=========================================")
-		log.Printf("Total printers being sent: %d", len(printers))
-		log.Printf("=========================================")
-	} else {
-		log.Printf("WARNING: No printers found in synced list. Partner agent may not have synced yet.")
-		log.Printf("DEBUG: Checking if printers exist in Redis...")
-	}
-
-	// Ensure printers is not nil (return empty array if nil)
-	if printers == nil {
-		printers = []map[string]interface{}{}
-		log.Printf("WARNING: Printers list was nil, returning empty array")
-	}
-
-	log.Printf("SUCCESS: Sending printer list to frontend - Partner: %s, Count: %d", user.ID, len(printers))
-
-	// Prepare response
-	response := map[string]interface{}{
-		"success":  true,
-		"printers": printers,
-		"count":    len(printers),
-		"message":  "Printers from synced partner agent list",
-	}
-	
-	// Log the response being sent
-	responseJSON, _ := json.MarshalIndent(response, "", "  ")
-	log.Printf("DEBUG: Response being sent to frontend:\n%s", string(responseJSON))
-	
-	h.sendJSONResponse(w, http.StatusOK, response)
-	
-	log.Printf("SUCCESS: Printers list sent to frontend - Partner: %s, Count: %d", user.ID, len(printers))
-}
-
-// findMostRecentPDF finds the most recently modified PDF file in the upload directory
-func (h *PrintHandler) findMostRecentPDF() (string, error) {
-	// Read directory
-	files, err := os.ReadDir(h.uploadDir)
-	if err != nil {
-		return "", fmt.Errorf("failed to read upload directory: %v", err)
-	}
-
-	var mostRecentPDF string
-	var mostRecentTime int64 = 0
-
-	// Find the most recent PDF file
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		// Check if it's a PDF
-		if strings.ToLower(filepath.Ext(file.Name())) != ".pdf" {
-			continue
-		}
-
-		// Get file info
-		info, err := file.Info()
-		if err != nil {
-			continue
-		}
-
-		// Check if this is the most recent
-		modTime := info.ModTime().Unix()
-		if modTime > mostRecentTime {
-			mostRecentTime = modTime
-			mostRecentPDF = file.Name()
-		}
-	}
-
-	if mostRecentPDF == "" {
-		return "", fmt.Errorf("no PDF files found in upload directory")
-	}
-
-	// Return absolute path
-	pdfPath := filepath.Join(h.uploadDir, mostRecentPDF)
-	absPath, err := filepath.Abs(pdfPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to get absolute path: %v", err)
-	}
-
-	return absPath, nil
-}
 

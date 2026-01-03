@@ -78,3 +78,43 @@ func (r *RedisClient) GetTTL(ctx context.Context, key string) (time.Duration, er
 	return r.client.TTL(ctx, key).Result()
 }
 
+// List Operations for Queue Management
+
+// LPUSH pushes a value to the left (head) of a list
+func (r *RedisClient) LPUSH(ctx context.Context, key string, value interface{}) error {
+	return r.client.LPush(ctx, key, value).Err()
+}
+
+// RPOPLPUSH atomically moves an element from the tail of source list to the head of destination list
+// Returns the element that was moved, or empty string if source list is empty
+func (r *RedisClient) RPOPLPUSH(ctx context.Context, source, destination string) (string, error) {
+	result, err := r.client.RPopLPush(ctx, source, destination).Result()
+	if err == redis.Nil {
+		return "", nil // List is empty
+	}
+	return result, err
+}
+
+// LREM removes count occurrences of value from the list
+// count > 0: remove from head to tail
+// count < 0: remove from tail to head
+// count = 0: remove all occurrences
+func (r *RedisClient) LREM(ctx context.Context, key string, count int64, value interface{}) (int64, error) {
+	return r.client.LRem(ctx, key, count, value).Result()
+}
+
+// LLEN returns the length of a list
+func (r *RedisClient) LLEN(ctx context.Context, key string) (int64, error) {
+	return r.client.LLen(ctx, key).Result()
+}
+
+// LRANGE returns a range of elements from a list
+func (r *RedisClient) LRANGE(ctx context.Context, key string, start, stop int64) ([]string, error) {
+	return r.client.LRange(ctx, key, start, stop).Result()
+}
+
+// SADD adds a member to a set
+func (r *RedisClient) SADD(ctx context.Context, key string, member interface{}) error {
+	return r.client.SAdd(ctx, key, member).Err()
+}
+

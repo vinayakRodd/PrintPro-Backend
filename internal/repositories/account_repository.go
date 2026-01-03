@@ -39,7 +39,7 @@ func (r *AccountRepository) GetByEmail(ctx context.Context, email string) (*acco
 }
 
 // GetByID retrieves an account by ID
-func (r *AccountRepository) GetByID(ctx context.Context, id int) (*account.Account, error) {
+func (r *AccountRepository) GetByID(ctx context.Context, id int64) (*account.Account, error) {
 	var a account.Account
 	err := r.db.QueryRow(ctx,
 		"SELECT id, email, password_hash, user_type, created_at FROM accounts WHERE id = $1",

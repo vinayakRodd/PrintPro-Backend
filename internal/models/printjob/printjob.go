@@ -4,10 +4,10 @@ import "time"
 
 // PrintJob represents a print job in the database
 type PrintJob struct {
-	ID        int       `db:"id" json:"id"`
-	UserID    *int      `db:"user_id" json:"user_id,omitempty"`     // Nullable (guest printing)
-	PartnerID int       `db:"partner_id" json:"partner_id"`
-	PrinterID *int      `db:"printer_id" json:"printer_id,omitempty"` // Nullable (assigned later)
+	ID        int64     `db:"id" json:"id"`
+	UserID    *int64    `db:"user_id" json:"user_id,omitempty"`     // Nullable (guest printing)
+	PartnerID int64     `db:"partner_id" json:"partner_id"`
+	PrinterID *int64    `db:"printer_id" json:"printer_id,omitempty"` // Nullable (assigned later)
 	Filename  string    `db:"filename" json:"filename"`
 	FileURL   string    `db:"file_url" json:"file_url"`
 	Status    string    `db:"status" json:"status"` // pending, processing, completed, failed, cancelled
@@ -17,16 +17,16 @@ type PrintJob struct {
 
 // CreatePrintJobRequest represents the request to create a new print job
 type CreatePrintJobRequest struct {
-	UserID    *int   `json:"user_id,omitempty"` // Optional for guest printing
-	PartnerID int    `json:"partner_id" binding:"required"`
-	PrinterID *int   `json:"printer_id,omitempty"` // Optional (can be assigned later)
+	UserID    *int64 `json:"user_id,omitempty"` // Optional for guest printing
+	PartnerID int64  `json:"partner_id" binding:"required"`
+	PrinterID *int64 `json:"printer_id,omitempty"` // Optional (can be assigned later)
 	Filename  string `json:"filename" binding:"required"`
 	FileURL   string `json:"file_url" binding:"required,url"`
 }
 
 // UpdatePrintJobRequest represents the request to update a print job
 type UpdatePrintJobRequest struct {
-	PrinterID *int    `json:"printer_id,omitempty"`
+	PrinterID *int64  `json:"printer_id,omitempty"`
 	Status    string  `json:"status,omitempty"`
 	TotalCost *float64 `json:"total_cost,omitempty" binding:"omitempty,min=0"`
 }

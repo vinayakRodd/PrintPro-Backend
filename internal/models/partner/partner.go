@@ -4,7 +4,7 @@ import "time"
 
 // Partner represents a partner (shop owner) in the database
 type Partner struct {
-	ID           int       `db:"id" json:"id"`
+	ID           int64     `db:"id" json:"id"`
 	OwnerName    string    `db:"owner_name" json:"owner_name"`
 	ShopName     string    `db:"shop_name" json:"shop_name"`
 	Email        string    `db:"email" json:"email"`

@@ -34,7 +34,7 @@ func CORS(next http.HandlerFunc) http.HandlerFunc {
 		// Allow specific origins (for development, allow localhost:3000 and Machine B's IP)
 		allowedOrigins := []string{
 			"http://localhost:3000",
-			"http://10.24.171.142:3000",
+			"http://10.16.10.142:3000",
 		}
 
 		// Check if origin is allowed
@@ -47,7 +47,7 @@ func CORS(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// If origin is allowed, set it; otherwise use the request origin if it's localhost or Machine B's IP
-		if allowed || (origin != "" && (origin == "http://localhost:3000" || origin == "http://localhost:3001" || origin == "http://10.24.171.142:3000")) {
+		if allowed || (origin != "" && (origin == "http://localhost:3000" || origin == "http://localhost:3001" || origin == "http://10.16.10.142:3000")) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		} else if origin != "" {
 			// For other origins, you might want to restrict this in production
