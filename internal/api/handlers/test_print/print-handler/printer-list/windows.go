@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 )
@@ -55,49 +56,64 @@ func GetWindowsPrinters() ([]map[string]interface{}, error) {
 				$isAvailable = $false
 				$status = "offline"
 				
-				# For USB printers, use WorkOffline flag as primary indicator
+				# Check printer availability using WorkOffline flag and PrinterStatus
+				# Windows standard: WorkOffline = false means ONLINE, WorkOffline = true means OFFLINE
+				# PrinterStatus codes: 3=Idle, 4=Printing, 5=WarmingUp (good)
+				#                    6=Offline, 7=Paused, 8=Error, 10=NotAvailable, 15=PendingDeletion (bad)
+				
+				# Primary check: WorkOffline flag
+				# For USB printers, Windows may cache state, so we need stricter checks
 				$portName = $freshPrinter.PortName
-				if ($portName -like "USB*") {
-					# FIX: Logic is inverted based on user feedback
-					# When unplugged → shows detected (WorkOffline = true, but showing as available)
-					# When plugged in → doesn't show (WorkOffline = false, but not showing as available)
-					# So we need to INVERT the WorkOffline check
-					
-					# INVERTED: WorkOffline = true means CONNECTED, WorkOffline = false means DISCONNECTED
-					if ($freshPrinter.WorkOffline -eq $true) {
-						# WorkOffline = true → CONNECTED (inverted logic)
-						if ($freshPrinter.PrinterStatus -notin @(6, 7, 8, 10, 15)) {
-							$isAvailable = $true
-							$status = "online"
-						} else {
-							# Status code indicates error, but WorkOffline says connected
-							$isAvailable = $true
-							$status = "online"
-						}
-					} else {
-						# WorkOffline = false → DISCONNECTED (inverted logic)
-						$isAvailable = $false
-						$status = "offline"
-					}
-				} else {
-					# For non-USB printers, use standard checks
+				$isUSB = $portName -like "USB*"
+				
+				if ($freshPrinter.WorkOffline -eq $true) {
+					# WorkOffline = true → Printer is OFFLINE/DISCONNECTED
+					$isAvailable = $false
+					$status = "offline"
+				} elseif ($freshPrinter.PrinterStatus -in @(6, 7, 8, 10, 15)) {
+					# PrinterStatus indicates error/offline states
+					$isAvailable = $false
+					if ($freshPrinter.PrinterStatus -eq 6) { $status = "offline" }
+					elseif ($freshPrinter.PrinterStatus -eq 7) { $status = "paused" }
+					elseif ($freshPrinter.PrinterStatus -eq 8) { $status = "error" }
+					elseif ($freshPrinter.PrinterStatus -eq 10) { $status = "not_available" }
+					elseif ($freshPrinter.PrinterStatus -eq 15) { $status = "pending_deletion" }
+				} elseif ($isUSB) {
+					# For USB printers: WorkOffline=false and good status, but verify with fresh query
+					# Windows caches USB printer state, so do a fresh query to verify
 					try {
-						$freshPrinter = Get-WmiObject -Class Win32_Printer -Filter "Name='$($printer.Name)'" -ErrorAction Stop
-						if ($freshPrinter.WorkOffline -eq $false -and $freshPrinter.PrinterStatus -notin @(6, 7, 8, 10, 15)) {
+						# Force a fresh query (not cached) by querying again
+						$freshCheck = Get-WmiObject -Class Win32_Printer -Filter "Name='$($freshPrinter.Name)'" -ErrorAction Stop
+						
+						# For USB printers, require ALL of these to be true:
+						# 1. WorkOffline must be false
+						# 2. PrinterStatus must be good (3, 4, 5, etc.)
+						# 3. Availability should be 3 (Available) or null
+						# 4. Fresh query must succeed
+						if ($freshCheck.WorkOffline -eq $false -and 
+						    $freshCheck.PrinterStatus -notin @(6, 7, 8, 10, 15) -and
+						    ($freshCheck.Availability -eq 3 -or $freshCheck.Availability -eq $null)) {
 							$isAvailable = $true
-							$status = "online"
+							if ($freshCheck.PrinterStatus -eq 3) { $status = "idle" }
+							elseif ($freshCheck.PrinterStatus -eq 4) { $status = "printing" }
+							elseif ($freshCheck.PrinterStatus -eq 5) { $status = "warming_up" }
+							else { $status = "online" }
 						} else {
+							# Fresh check failed or indicates offline
 							$isAvailable = $false
-							if ($freshPrinter.PrinterStatus -eq 6) { $status = "offline" }
-							elseif ($freshPrinter.PrinterStatus -eq 7) { $status = "paused" }
-							elseif ($freshPrinter.PrinterStatus -eq 8) { $status = "error" }
-							elseif ($freshPrinter.PrinterStatus -eq 10) { $status = "not_available" }
-							elseif ($freshPrinter.PrinterStatus -eq 15) { $status = "pending_deletion" }
+							$status = "offline"
 						}
 					} catch {
+						# If fresh query fails, printer is likely disconnected
 						$isAvailable = $false
 						$status = "offline"
 					}
+					# For network/local printers (non-USB), WorkOffline=false and good status = available
+					$isAvailable = $true
+					if ($freshPrinter.PrinterStatus -eq 3) { $status = "idle" }
+					elseif ($freshPrinter.PrinterStatus -eq 4) { $status = "printing" }
+					elseif ($freshPrinter.PrinterStatus -eq 5) { $status = "warming_up" }
+					else { $status = "online" }
 				}
 				
 				# Only include printers that are actually available
@@ -144,22 +160,10 @@ func GetWindowsPrinters() ([]map[string]interface{}, error) {
 			}
 		}
 
-		// Fallback to original method if enhanced detection fails
-		psCommandFallback := `Get-Printer | Select-Object Name, PrinterStatus, DriverName, PortName, Default | ConvertTo-Json`
-		cmd = exec.Command(psPath, "-Command", psCommandFallback)
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-
-		if err := cmd.Run(); err == nil {
-			output := stdout.String()
-			if strings.TrimSpace(output) != "" {
-				var printerList []BasicPrinterInfo
-
-				if err := json.Unmarshal([]byte(output), &printerList); err == nil && len(printerList) > 0 {
-					return ProcessPrinterList(printerList)
-				}
-			}
-		}
+		// Fallback method removed - we cannot reliably detect disconnected printers
+		// without WorkOffline flag, so we return empty list to avoid showing disconnected printers
+		// If enhanced detection fails, return empty list rather than potentially showing disconnected printers
+		log.Printf("WARNING: Enhanced printer detection failed, returning empty list to avoid showing disconnected printers")
 	}
 
 	return []map[string]interface{}{}, fmt.Errorf("failed to get printers")

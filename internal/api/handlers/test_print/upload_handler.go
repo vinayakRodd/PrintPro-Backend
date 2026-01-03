@@ -15,13 +15,19 @@ import (
 
 // UploadHandler handles file uploads from customers
 type UploadHandler struct {
-	uploadDir string
+	uploadDir    string
+	agentHandler interface {
+		QueueJobForAgent(sourceFilePath string) error
+	}
 }
 
 // NewUploadHandler creates a new upload handler
-func NewUploadHandler(uploadDir string) *UploadHandler {
+func NewUploadHandler(uploadDir string, agentHandler interface {
+	QueueJobForAgent(sourceFilePath string) error
+}) *UploadHandler {
 	return &UploadHandler{
-		uploadDir: uploadDir,
+		uploadDir:    uploadDir,
+		agentHandler: agentHandler,
 	}
 }
 
@@ -104,18 +110,20 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	timestamp := time.Now().Format("20060102_150405")
 	filename := fmt.Sprintf("%s_%s_%s%s", timestamp, user.ID, nameWithoutExt, ext)
 
-	// Build file path
-	filePath := filepath.Join(h.uploadDir, filename)
+	// Save file directly to ready folder (as per requirements)
+	// QueueJobForAgent will handle copying to ready folder and pushing to Redis
+	// Build temporary file path first (in uploadDir)
+	tempFilePath := filepath.Join(h.uploadDir, filename)
 
-	// Create upload directory if it doesn't exist
+	// Create upload directory if it doesn't exist (for temp file)
 	if err := os.MkdirAll(h.uploadDir, 0755); err != nil {
 		log.Printf("ERROR: Failed to create upload directory - %v", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to create upload directory")
 		return
 	}
 
-	// Create file on disk
-	dst, err := os.Create(filePath)
+	// Create temporary file on disk
+	dst, err := os.Create(tempFilePath)
 	if err != nil {
 		log.Printf("ERROR: Failed to create file - %v", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to save file")
@@ -123,13 +131,29 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dst.Close()
 
-	// Copy file content
+	// Copy file content to temporary location
 	_, err = io.Copy(dst, file)
 	if err != nil {
 		log.Printf("ERROR: Failed to write file - %v", err)
-		os.Remove(filePath) // Clean up on error
+		os.Remove(tempFilePath) // Clean up on error
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to save file")
 		return
+	}
+
+	// Queue job to ready folder and push to Redis
+	// This will copy file to ready folder and push filename to Redis list
+	if h.agentHandler != nil {
+		if err := h.agentHandler.QueueJobForAgent(tempFilePath); err != nil {
+			log.Printf("ERROR: Failed to queue job to ready folder: %v", err)
+			os.Remove(tempFilePath) // Clean up temp file on error
+			h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to queue file: "+err.Error())
+			return
+		}
+		// Remove temp file after successful copy to ready folder
+		os.Remove(tempFilePath)
+	} else {
+		// If no agent handler, keep file in uploadDir (fallback)
+		log.Printf("WARNING: No agent handler available, file saved to upload directory only")
 	}
 
 	log.Printf("SUCCESS: File uploaded - Customer: %s, File: %s, Size: %d bytes", user.ID, filename, header.Size)

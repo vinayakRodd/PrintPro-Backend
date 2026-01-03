@@ -21,7 +21,7 @@ func NewPrinterRepository(db *pgxpool.Pool) *PrinterRepository {
 
 // UpsertPrinter inserts a new printer or updates an existing one based on serial_number
 // Uses ON CONFLICT to update last_seen and status if the printer already exists
-func (r *PrinterRepository) UpsertPrinter(ctx context.Context, partnerID int, printerName, serialNumber, status string) (*printer.Printer, error) {
+func (r *PrinterRepository) UpsertPrinter(ctx context.Context, partnerID int64, printerName, serialNumber, status string) (*printer.Printer, error) {
 	var p printer.Printer
 	now := time.Now()
 	
@@ -45,7 +45,7 @@ func (r *PrinterRepository) UpsertPrinter(ctx context.Context, partnerID int, pr
 }
 
 // GetByPartnerID retrieves all printers for a specific partner
-func (r *PrinterRepository) GetByPartnerID(ctx context.Context, partnerID int) ([]printer.Printer, error) {
+func (r *PrinterRepository) GetByPartnerID(ctx context.Context, partnerID int64) ([]printer.Printer, error) {
 	rows, err := r.db.Query(ctx,
 		"SELECT id, partner_id, printer_name, serial_number, status, last_seen, created_at, updated_at FROM printers WHERE partner_id = $1 ORDER BY last_seen DESC",
 		partnerID,

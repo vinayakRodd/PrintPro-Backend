@@ -20,7 +20,7 @@ func NewPartnerProfileRepository(db *pgxpool.Pool) *PartnerProfileRepository {
 }
 
 // Create creates a new partner profile
-func (r *PartnerProfileRepository) Create(ctx context.Context, accountID int, shopName, printerID string) (*partner_profile.PartnerProfile, error) {
+func (r *PartnerProfileRepository) Create(ctx context.Context, accountID int64, shopName, printerID string) (*partner_profile.PartnerProfile, error) {
 	var p partner_profile.PartnerProfile
 	err := r.db.QueryRow(ctx,
 		`INSERT INTO partner_profiles (account_id, shop_name, printer_id) 
@@ -37,7 +37,7 @@ func (r *PartnerProfileRepository) Create(ctx context.Context, accountID int, sh
 }
 
 // GetByAccountID retrieves a partner profile by account ID
-func (r *PartnerProfileRepository) GetByAccountID(ctx context.Context, accountID int) (*partner_profile.PartnerProfile, error) {
+func (r *PartnerProfileRepository) GetByAccountID(ctx context.Context, accountID int64) (*partner_profile.PartnerProfile, error) {
 	var p partner_profile.PartnerProfile
 	err := r.db.QueryRow(ctx,
 		"SELECT id, account_id, shop_name, printer_id FROM partner_profiles WHERE account_id = $1",

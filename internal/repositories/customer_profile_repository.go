@@ -20,7 +20,7 @@ func NewCustomerProfileRepository(db *pgxpool.Pool) *CustomerProfileRepository {
 }
 
 // Create creates a new customer profile
-func (r *CustomerProfileRepository) Create(ctx context.Context, accountID int, phoneNumber string) (*customer_profile.CustomerProfile, error) {
+func (r *CustomerProfileRepository) Create(ctx context.Context, accountID int64, phoneNumber string) (*customer_profile.CustomerProfile, error) {
 	var p customer_profile.CustomerProfile
 	var phoneNum sql.NullString
 	if phoneNumber != "" {
@@ -42,7 +42,7 @@ func (r *CustomerProfileRepository) Create(ctx context.Context, accountID int, p
 }
 
 // GetByAccountID retrieves a customer profile by account ID
-func (r *CustomerProfileRepository) GetByAccountID(ctx context.Context, accountID int) (*customer_profile.CustomerProfile, error) {
+func (r *CustomerProfileRepository) GetByAccountID(ctx context.Context, accountID int64) (*customer_profile.CustomerProfile, error) {
 	var p customer_profile.CustomerProfile
 	err := r.db.QueryRow(ctx,
 		"SELECT id, account_id, phone_number, wallet_balance FROM customer_profiles WHERE account_id = $1",

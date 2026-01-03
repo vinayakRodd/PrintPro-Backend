@@ -56,7 +56,7 @@ func (r *UserRepository) Create(ctx context.Context, fullName, email, passwordHa
 }
 
 // GetByID retrieves a user by ID
-func (r *UserRepository) GetByID(ctx context.Context, id int) (*user.User, error) {
+func (r *UserRepository) GetByID(ctx context.Context, id int64) (*user.User, error) {
 	var u user.User
 	err := r.db.QueryRow(ctx,
 		"SELECT id, full_name, email, password_hash, created_at FROM users WHERE id = $1",
@@ -74,7 +74,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id int) (*user.User, error
 }
 
 // Update updates user information
-func (r *UserRepository) Update(ctx context.Context, id int, fullName, email string) error {
+func (r *UserRepository) Update(ctx context.Context, id int64, fullName, email string) error {
 	_, err := r.db.Exec(ctx,
 		"UPDATE users SET full_name = $1, email = $2 WHERE id = $3",
 		fullName, email, id,

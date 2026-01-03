@@ -4,8 +4,8 @@ import "time"
 
 // Printer represents a printer in the database
 type Printer struct {
-	ID          int       `db:"id" json:"id"`
-	PartnerID   int       `db:"partner_id" json:"partner_id"`
+	ID          int64     `db:"id" json:"id"`
+	PartnerID   int64     `db:"partner_id" json:"partner_id"`
 	PrinterName string    `db:"printer_name" json:"printer_name"`
 	SerialNumber string   `db:"serial_number" json:"serial_number"`
 	Status      string    `db:"status" json:"status"` // online, offline, etc.
@@ -16,7 +16,7 @@ type Printer struct {
 
 // CreatePrinterRequest represents the request to create a new printer
 type CreatePrinterRequest struct {
-	PartnerID   int     `json:"partner_id" binding:"required"`
+	PartnerID   int64   `json:"partner_id" binding:"required"`
 	ModelName   string  `json:"model_name" binding:"required"`
 	IsColor     bool    `json:"is_color"`
 	Status      string  `json:"status"`

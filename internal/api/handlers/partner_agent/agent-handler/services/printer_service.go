@@ -6,37 +6,80 @@ import (
 	"log"
 )
 
-// GetSyncedPrinters returns the current synced printer list (thread-safe)
-// Falls back to Redis if in-memory list is empty (e.g., after server restart)
+// GetSyncedPrinters returns the current synced printer list from Redis
+// ALWAYS reads from Redis - if Redis is empty, returns empty list
 func (h *AgentHandler) GetSyncedPrinters() []map[string]interface{} {
-	var printers []map[string]interface{}
+	log.Printf("=========================================")
+	log.Printf("GetSyncedPrinters CALLED - Reading from Redis")
+	log.Printf("=========================================")
 	
-	h.printerMutex.RLock()
-	if h.syncedPrinters != nil && len(h.syncedPrinters) > 0 {
-		// Create a deep copy to avoid race conditions
-		printers = make([]map[string]interface{}, len(h.syncedPrinters))
-		for i, p := range h.syncedPrinters {
-			// Deep copy each printer map
-			printerCopy := make(map[string]interface{})
-			for k, v := range p {
-				printerCopy[k] = v
-			}
-			printers[i] = printerCopy
-		}
+	ctx := context.Background()
+	printerKey := "partner:printers"
+	
+	// ALWAYS read from Redis
+	if h.redisClient == nil {
+		log.Printf("ERROR: Redis client is nil, returning empty list")
+		return []map[string]interface{}{}
 	}
-	h.printerMutex.RUnlock()
-
-	log.Printf("DEBUG: GetSyncedPrinters - In-memory count: %d", len(printers))
-
-	// If in-memory list is empty, try to load from Redis
-	if len(printers) == 0 && h.redisClient != nil {
-		printers = h.loadPrintersFromRedis()
+	
+	log.Printf("DEBUG: GetSyncedPrinters - Reading from Redis key: %s", printerKey)
+	cachedJSON, err := h.redisClient.Get(ctx, printerKey)
+	if err != nil {
+		// Key doesn't exist or expired - return empty list
+		log.Printf("INFO: Redis key %s does not exist or expired - returning empty list", printerKey)
+		return []map[string]interface{}{}
 	}
-
-	// Ensure we return a non-nil slice
-	if printers == nil {
-		printers = []map[string]interface{}{}
-		log.Printf("DEBUG: Returning empty printer list (nil was converted to empty slice)")
+	
+	// Check if Redis returned empty string
+	if cachedJSON == "" {
+		log.Printf("INFO: Redis key %s is empty string - returning empty list", printerKey)
+		return []map[string]interface{}{}
+	}
+	
+	log.Printf("DEBUG: GetSyncedPrinters - Found data in Redis (length: %d bytes)", len(cachedJSON))
+	log.Printf("DEBUG: GetSyncedPrinters - Redis JSON content: '%s'", cachedJSON)
+	
+	// Check if it's explicitly an empty array
+	if cachedJSON == "[]" || cachedJSON == "null" {
+		log.Printf("INFO: GetSyncedPrinters - Redis contains empty array [] - returning empty list")
+		log.Printf("=========================================")
+		log.Printf("GetSyncedPrinters RETURNING: 0 printers (empty array from Redis)")
+		log.Printf("=========================================")
+		return []map[string]interface{}{}
+	}
+	
+	var printers []map[string]interface{}
+	if err := json.Unmarshal([]byte(cachedJSON), &printers); err != nil {
+		log.Printf("ERROR: Failed to unmarshal printers from Redis: %v - returning empty list", err)
+		return []map[string]interface{}{}
+	}
+	
+	// Check if unmarshaled array is empty (partner agent sent empty list)
+	if len(printers) == 0 {
+		log.Printf("INFO: GetSyncedPrinters - Redis contains EMPTY printer list (partner agent sent empty list)")
+		log.Printf("=========================================")
+		log.Printf("GetSyncedPrinters RETURNING: 0 printers (empty list from Redis)")
+		log.Printf("=========================================")
+		return []map[string]interface{}{}
+	}
+	
+	log.Printf("SUCCESS: GetSyncedPrinters - Loaded %d printers from Redis", len(printers))
+	log.Printf("DEBUG: GetSyncedPrinters - Sample printer from Redis: %+v", printers[0])
+	log.Printf("DEBUG: GetSyncedPrinters - All printers from Redis:")
+	for i, p := range printers {
+		printerJSON, _ := json.MarshalIndent(p, "    ", "  ")
+		log.Printf("  Printer #%d:\n%s", i+1, string(printerJSON))
+	}
+	
+	log.Printf("=========================================")
+	log.Printf("GetSyncedPrinters RETURNING: %d printers from Redis", len(printers))
+	log.Printf("=========================================")
+	return printers
+		log.Printf("INFO: No printers synced yet by partner agent - returning empty list")
+	} else if len(printers) == 0 {
+		log.Printf("INFO: Partner agent has not synced any printers yet - returning empty list")
+	} else {
+		log.Printf("INFO: Returning %d printers synced by partner agent", len(printers))
 	}
 
 	log.Printf("DEBUG: GetSyncedPrinters returning %d printers", len(printers))

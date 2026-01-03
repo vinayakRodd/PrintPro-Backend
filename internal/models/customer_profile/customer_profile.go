@@ -4,8 +4,8 @@ import "database/sql"
 
 // CustomerProfile represents a customer's profile information
 type CustomerProfile struct {
-	ID           int            `db:"id" json:"id"`
-	AccountID    int            `db:"account_id" json:"account_id"`
+	ID           int64          `db:"id" json:"id"`
+	AccountID    int64          `db:"account_id" json:"account_id"`
 	PhoneNumber  sql.NullString `db:"phone_number" json:"phone_number,omitempty"`
 	WalletBalance float64       `db:"wallet_balance" json:"wallet_balance"`
 }

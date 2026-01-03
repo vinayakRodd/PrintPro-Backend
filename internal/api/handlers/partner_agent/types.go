@@ -9,6 +9,7 @@ import (
 // ConfirmRequest represents the request to confirm a print job
 type ConfirmRequest struct {
 	Filename string `json:"filename"`
+	Status   string `json:"status,omitempty"` // Optional status field from Python script
 }
 
 // SyncPrintersRequest represents the request to sync printers from partner agent

@@ -25,12 +25,22 @@ func ProcessPrinterList(printerList []BasicPrinterInfo) ([]map[string]interface{
 			continue
 		}
 
+		// Check printer status - filter out disconnected/offline printers
 		status := "online"
+		isAvailable := true
 		if p.PrinterStatus != nil {
 			statusCode := *p.PrinterStatus
-			if statusCode == 6 || statusCode == 7 {
+			// Status codes: 6=Offline, 7=Paused, 8=Error, 10=NotAvailable, 15=PendingDeletion
+			// Only include printers with good status (3=Idle, 4=Printing, 5=WarmingUp, etc.)
+			if statusCode == 6 || statusCode == 7 || statusCode == 8 || statusCode == 10 || statusCode == 15 {
 				status = "offline"
+				isAvailable = false
 			}
+		}
+
+		// Skip disconnected/offline printers
+		if !isAvailable {
+			continue
 		}
 
 		isDefault := false
