@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
-	"strings"
+	"strconv"
 )
 
 // ListFiles lists all PDFs from Redis queues and ready folder (NOT archived)
@@ -35,6 +35,40 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
+	// Get partner_id from account_id
+	accountID, err := strconv.ParseInt(user.ID, 10, 64)
+	if err != nil {
+		log.Printf("ERROR: Failed to parse user ID '%s' - %v", user.ID, err)
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "Invalid account ID format")
+		return
+	}
+
+	// Get partner profile to get partner_id
+	partnerProfile, err := h.partnerProfileRepo.GetByAccountID(ctx, accountID)
+	if err != nil {
+		log.Printf("ERROR: Partner profile not found for account_id: %d - %v", accountID, err)
+		h.sendErrorResponse(w, http.StatusNotFound, "Partner profile not found", "Partner profile not found for this account")
+		return
+	}
+
+	partnerID := partnerProfile.ID
+	log.Printf("INFO: Listing files for partner_id: %d (account_id: %d)", partnerID, accountID)
+
+	// Get all filenames that belong to this partner from database
+	partnerFilenames, err := h.printJobRepo.GetFilenamesByPartnerID(ctx, partnerID)
+	if err != nil {
+		log.Printf("WARNING: Failed to get partner filenames from database: %v (will show all files)", err)
+		partnerFilenames = []string{} // Empty list - will show no files if DB lookup fails
+	}
+
+	// Create a map for quick lookup of partner's filenames
+	partnerFilesMap := make(map[string]bool)
+	for _, filename := range partnerFilenames {
+		partnerFilesMap[filename] = true
+	}
+
 	readyDir := h.agentHandler.GetReadyDir()
 
 	// Ensure directory exists
@@ -45,7 +79,6 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	processingCount := 0
 
 	// Get filenames from Redis queues
-	ctx := r.Context()
 	readyQueue, _ := h.agentHandler.GetReadyQueue(ctx)
 	processingQueue, _ := h.agentHandler.GetProcessingQueue(ctx)
 
@@ -63,13 +96,31 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	readyFiles, err := os.ReadDir(readyDir)
 	if err == nil {
 		for _, file := range readyFiles {
-			if file.IsDir() || strings.ToLower(filepath.Ext(file.Name())) != ".pdf" {
+			if file.IsDir() {
 				continue
 			}
-
+			
 			filename := file.Name()
+			
+			// FILTER: Only include files that:
+			// 1. Belong to this partner (in print_jobs table)
+			// 2. Actually exist in the ready folder
+			if !partnerFilesMap[filename] {
+				log.Printf("DEBUG: Skipping file '%s' - not in print_jobs for partner_id %d", filename, partnerID)
+				continue
+			}
+			
+			// Verify file actually exists in ready folder (double check)
+			filePath := filepath.Join(readyDir, filename)
+			if _, err := os.Stat(filePath); os.IsNotExist(err) {
+				log.Printf("DEBUG: Skipping file '%s' - exists in print_jobs but not in ready folder", filename)
+				continue
+			}
+			
+			// Include all file types (PDFs, images, documents, etc.) - but only for this partner
 			info, err := file.Info()
 			if err != nil {
+				log.Printf("WARNING: Failed to get file info for '%s' - %v", filename, err)
 				continue
 			}
 
@@ -106,7 +157,7 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"files":   fileList,
 		"count":   len(fileList),
-		"message": "PDFs from Redis queues and ready folder",
+		"message": "All files from Redis queues and ready folder",
 	})
 }
 

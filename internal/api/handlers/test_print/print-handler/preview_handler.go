@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// PreviewPDF serves PDF files for viewing in browser/iframe
+// PreviewPDF serves PDF and image files for viewing in browser/iframe
 // GET /api/test-print/preview?filename=<filename>
 func (h *PrintHandler) PreviewPDF(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -46,12 +46,10 @@ func (h *PrintHandler) PreviewPDF(w http.ResponseWriter, r *http.Request) {
 	sanitizedFilename = strings.ReplaceAll(sanitizedFilename, "/", "_")
 	sanitizedFilename = strings.ReplaceAll(sanitizedFilename, "\\", "_")
 
-	// Verify file extension is PDF
-	if !strings.HasSuffix(strings.ToLower(sanitizedFilename), ".pdf") {
-		log.Printf("ERROR: Non-PDF file requested for preview: %s", sanitizedFilename)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid file type", "Only PDF files can be viewed")
-		return
-	}
+	// Get file extension for content type detection
+	ext := strings.ToLower(filepath.Ext(sanitizedFilename))
+	isPDF := ext == ".pdf"
+	isImage := ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".bmp" || ext == ".webp"
 
 	// Check file in ready folder first, then processing folder
 	readyDir := h.agentHandler.GetReadyDir()
@@ -119,13 +117,55 @@ func (h *PrintHandler) PreviewPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set headers for PDF viewing
-	w.Header().Set("Content-Type", "application/pdf")
+	// Set headers based on file type
+	var contentType string
+	if isPDF {
+		contentType = "application/pdf"
+	} else if isImage {
+		// Set appropriate content type for images
+		switch ext {
+		case ".jpg", ".jpeg":
+			contentType = "image/jpeg"
+		case ".png":
+			contentType = "image/png"
+		case ".gif":
+			contentType = "image/gif"
+		case ".bmp":
+			contentType = "image/bmp"
+		case ".webp":
+			contentType = "image/webp"
+		default:
+			contentType = "image/jpeg"
+		}
+	} else {
+		// Set content type for other document types
+		switch ext {
+		case ".doc":
+			contentType = "application/msword"
+		case ".docx":
+			contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+		case ".xls":
+			contentType = "application/vnd.ms-excel"
+		case ".xlsx":
+			contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+		case ".txt":
+			contentType = "text/plain"
+		case ".rtf":
+			contentType = "application/rtf"
+		case ".odt":
+			contentType = "application/vnd.oasis.opendocument.text"
+		default:
+			// For unknown types, use octet-stream (download instead of preview)
+			contentType = "application/octet-stream"
+		}
+	}
+	
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, sanitizedFilename))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 
-	log.Printf("SUCCESS: Serving PDF for preview - User: %s, File: %s, Size: %d bytes", user.ID, sanitizedFilename, fileInfo.Size())
+	log.Printf("SUCCESS: Serving file for preview - User: %s, File: %s, Type: %s, Size: %d bytes", user.ID, sanitizedFilename, contentType, fileInfo.Size())
 
 	// Stream the PDF file
 	http.ServeContent(w, r, sanitizedFilename, fileInfo.ModTime(), file)

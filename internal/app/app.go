@@ -107,7 +107,7 @@ func (a *Application) RegisterRoutes() {
 	os.MkdirAll(processingDir, 0755)  // Create processing directory
 	agentHandler := partner_agent.NewAgentHandler(testPrintDir, archiveDir, a.redisClient, a.repositories.PrintJobRepository)
 
-	printHandler := print_handler.NewPrintHandler(testPrintDir, agentHandler)
+	printHandler := print_handler.NewPrintHandler(testPrintDir, agentHandler, a.repositories.PartnerProfileRepository, a.repositories.PrintJobRepository)
 	uploadHandler := test_print.NewUploadHandler(
 		testPrintDir,
 		agentHandler,

@@ -71,3 +71,34 @@ func (r *PrintJobRepository) GetByFilename(ctx context.Context, filename string)
 	return &job, nil
 }
 
+// GetFilenamesByPartnerID retrieves all filenames for a specific partner
+func (r *PrintJobRepository) GetFilenamesByPartnerID(ctx context.Context, partnerID int64) ([]string, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT DISTINCT filename, created_at
+		 FROM print_jobs 
+		 WHERE partner_id = $1
+		 ORDER BY created_at DESC`,
+		partnerID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get filenames by partner_id: %w", err)
+	}
+	defer rows.Close()
+
+	var filenames []string
+	for rows.Next() {
+		var filename string
+		var createdAt time.Time
+		if err := rows.Scan(&filename, &createdAt); err != nil {
+			return nil, fmt.Errorf("failed to scan filename: %w", err)
+		}
+		filenames = append(filenames, filename)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating filenames: %w", err)
+	}
+
+	return filenames, nil
+}
+
