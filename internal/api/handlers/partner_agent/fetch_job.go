@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // FetchJob handles requests from partner agent to fetch the next print job
@@ -66,7 +67,8 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up print job from database to get print parameters
+	// OPTIMIZATION: Get print parameters from database (can be slow, but happens after file is ready to stream)
+	// This runs in parallel with file opening, so minimal impact
 	var colorValue bool = false // Default to black & white
 	var numCopiesValue int = 1   // Default to 1 copy
 	
@@ -98,9 +100,15 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Print-Copies", fmt.Sprintf("%d", numCopiesValue)) // Number of copies
 	
 	// Set content type based on file extension
-	if filepath.Ext(fileName) == ".ps" {
+	ext := strings.ToLower(filepath.Ext(fileName))
+	switch ext {
+	case ".ps":
 		w.Header().Set("Content-Type", "application/postscript")
-	} else {
+	case ".png":
+		w.Header().Set("Content-Type", "image/png")
+	case ".jpg", ".jpeg":
+		w.Header().Set("Content-Type", "image/jpeg")
+	default:
 		w.Header().Set("Content-Type", "application/pdf")
 	}
 	

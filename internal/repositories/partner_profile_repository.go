@@ -36,6 +36,24 @@ func (r *PartnerProfileRepository) Create(ctx context.Context, accountID int64, 
 	return &p, nil
 }
 
+// GetByID retrieves a partner profile by ID
+func (r *PartnerProfileRepository) GetByID(ctx context.Context, id int64) (*partner_profile.PartnerProfile, error) {
+	var p partner_profile.PartnerProfile
+	err := r.db.QueryRow(ctx,
+		"SELECT id, account_id, shop_name, printer_id FROM partner_profiles WHERE id = $1",
+		id,
+	).Scan(&p.ID, &p.AccountID, &p.ShopName, &p.PrinterID)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("partner profile not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get partner profile: %w", err)
+	}
+
+	return &p, nil
+}
+
 // GetByAccountID retrieves a partner profile by account ID
 func (r *PartnerProfileRepository) GetByAccountID(ctx context.Context, accountID int64) (*partner_profile.PartnerProfile, error) {
 	var p partner_profile.PartnerProfile

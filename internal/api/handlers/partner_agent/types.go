@@ -22,9 +22,10 @@ type SyncPrintersRequest struct {
 	Printers interface{} `json:"printers"` // Can be []string or []map[string]interface{}
 }
 
-// PrintJobRepository interface for getting print job by filename
+// PrintJobRepository interface for print job operations
 type PrintJobRepository interface {
 	GetByFilename(ctx context.Context, filename string) (*printjob.PrintJob, error)
+	UpdateStatus(ctx context.Context, filename, status string) error
 }
 
 // AgentHandler handles requests from partner agent

@@ -12,6 +12,7 @@ import (
 	"print-pro-backend/internal/api/handlers/shop_handler"
 	"print-pro-backend/internal/api/handlers/test_print"
 	print_handler "print-pro-backend/internal/api/handlers/test_print/print-handler"
+	"print-pro-backend/internal/api/handlers/websocket"
 	"print-pro-backend/internal/api/routes"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
@@ -107,7 +108,11 @@ func (a *Application) RegisterRoutes() {
 	os.MkdirAll(processingDir, 0755)  // Create processing directory
 	agentHandler := partner_agent.NewAgentHandler(testPrintDir, archiveDir, a.redisClient, a.repositories.PrintJobRepository)
 
-	printHandler := print_handler.NewPrintHandler(testPrintDir, agentHandler, a.repositories.PartnerProfileRepository, a.repositories.PrintJobRepository)
+	// Initialize WebSocket hub and handler (must be before PrintHandler)
+	wsHub := websocket.NewHub()
+	wsHandler := websocket.NewWebSocketHandler(wsHub, a.redisClient)
+	
+	printHandler := print_handler.NewPrintHandler(testPrintDir, agentHandler, a.repositories.PartnerProfileRepository, a.repositories.PrintJobRepository, wsHub)
 	uploadHandler := test_print.NewUploadHandler(
 		testPrintDir,
 		agentHandler,
@@ -128,12 +133,16 @@ func (a *Application) RegisterRoutes() {
 	http.HandleFunc("/api/partner-agent/confirm-print", cors.CORS(agentHandler.ConfirmPrint))
 	http.HandleFunc("/api/partner-agent/confirm", cors.CORS(agentHandler.ConfirmPrint)) // Keep for backward compatibility
 	http.HandleFunc("/api/partner-agent/sync-printers", cors.CORS(agentHandler.SyncPrinters))
+	http.HandleFunc("/api/partner-agent/reprint", cors.CORS(agentHandler.Reprint)) // Reprint endpoint - clears Redis and resets status
 
 	// Initialize shop handler
 	shopHandler := shop_handler.NewShopHandler(a.repositories.PartnerProfileRepository)
 
 	// Register shop routes (optional auth - can be public or authenticated)
 	http.HandleFunc("/api/shops/names", cors.CORS(a.services.RateLimiter.LimitMiddleware(shopHandler.GetShopNames)))
+
+	// Register WebSocket routes (hub already initialized above)
+	http.HandleFunc("/ws/", cors.CORS(wsHandler.HandleWebSocket))
 }
 
 // Close gracefully shuts down the application by closing Redis and PostgreSQL connections

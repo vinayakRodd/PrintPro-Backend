@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
+	"strconv"
 	"strings"
 )
 
@@ -82,30 +83,70 @@ func (h *PrintHandler) PrintFile(w http.ResponseWriter, r *http.Request) {
 	// Detect file type
 	fileExt := strings.ToLower(filepath.Ext(absFilePath))
 	isPDF := fileExt == ".pdf"
+	isPNG := fileExt == ".png"
+	isImage := isPNG || fileExt == ".jpg" || fileExt == ".jpeg"
 	
-	// Ensure we only print PDFs
-	if !isPDF {
-		log.Printf("ERROR: Non-PDF file type requested for printing: %s", fileExt)
+	// Accept PDF and image files (PNG, JPG, JPEG)
+	if !isPDF && !isImage {
+		log.Printf("ERROR: Unsupported file type requested for printing: %s", fileExt)
 		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid file type", 
-			fmt.Sprintf("Only PDF files can be printed. File type '%s' is not supported.", fileExt))
+			fmt.Sprintf("Only PDF and image files (PNG, JPG, JPEG) can be printed. File type '%s' is not supported.", fileExt))
 		return
 	}
 
-	// Queue PDF file for partner agent when frontend explicitly requests print
-	// Logic: Ensure file is in Redis ready queue → Agent will fetch via RPOPLPUSH
-	// The partner agent will fetch this file via /api/partner-agent/fetch-job endpoint
 	pdfFileName := filepath.Base(absFilePath)
+	ctx := r.Context()
 	
-	log.Printf("INFO: Partner requested print - Ensuring file is in Redis ready queue - File: %s, Printer: %s, Partner: %s", pdfFileName, req.Printer, user.ID)
+	// OPTIMIZATION: Get printer_id directly from authenticated user (fast, single query)
+	// No need to query print_job first - we already know the partner from auth
+	var targetPrinterID string
+	accountID, err := strconv.ParseInt(user.ID, 10, 64)
+	if err == nil {
+		// Get partner profile directly from account_id (we already have user.ID)
+		partnerProfile, err := h.partnerProfileRepo.GetByAccountID(ctx, accountID)
+		if err == nil && partnerProfile != nil {
+			targetPrinterID = partnerProfile.PrinterID
+			log.Printf("DEBUG: Found printer_id '%s' for partner account_id=%d", targetPrinterID, accountID)
+		}
+	}
 	
-	// Ensure file is in Redis ready queue (will check for duplicates)
+	// OPTIMIZATION: Queue file in Redis FIRST (fast operation)
+	log.Printf("INFO: Partner requested print - Queueing file in Redis - File: %s, Printer: %s, Partner: %s", pdfFileName, req.Printer, user.ID)
+	
 	if err := h.agentHandler.MoveToProcessing(pdfFileName); err != nil {
 		log.Printf("ERROR: Failed to queue file in Redis: %v - File: %s, Partner: %s", err, pdfFileName, user.ID)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "File error", "Failed to queue file: "+err.Error())
 		return
 	}
 	
-	log.Printf("SUCCESS: File queued in Redis ready queue - Partner: %s, File: %s (agent can now fetch via RPOPLPUSH)", user.ID, pdfFileName)
+	log.Printf("SUCCESS: File queued in Redis ready queue - Partner: %s, File: %s", user.ID, pdfFileName)
+	
+	// OPTIMIZATION: Send WebSocket notification IMMEDIATELY (don't wait for anything)
+	if h.wsHub != nil && targetPrinterID != "" {
+		_, connected := h.wsHub.GetConnection(targetPrinterID)
+		if connected {
+			// Send notification message with filename
+			notification := map[string]interface{}{
+				"action": "print_job_available",
+				"payload": map[string]interface{}{
+					"filename": pdfFileName,
+				},
+			}
+			
+			notificationJSON, err := json.Marshal(notification)
+			if err != nil {
+				log.Printf("ERROR: Failed to marshal WebSocket notification: %v", err)
+			} else {
+				if err := h.wsHub.SendToPrinter(targetPrinterID, notificationJSON); err != nil {
+					log.Printf("WARNING: Failed to send WebSocket notification: %v (agent will poll instead)", err)
+				} else {
+					log.Printf("SUCCESS: WebSocket notification sent to printer_id: '%s' for file: %s", targetPrinterID, pdfFileName)
+				}
+			}
+		} else {
+			log.Printf("DEBUG: Printer '%s' not connected via WebSocket (agent will poll Redis queue)", targetPrinterID)
+		}
+	}
 
 	// Return success response with processing status
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{

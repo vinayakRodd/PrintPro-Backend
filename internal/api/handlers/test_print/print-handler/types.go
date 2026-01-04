@@ -2,6 +2,7 @@ package print_handler
 
 import (
 	"print-pro-backend/internal/api/handlers/partner_agent"
+	"print-pro-backend/internal/api/handlers/websocket"
 	"print-pro-backend/internal/repositories"
 )
 
@@ -11,15 +12,17 @@ type PrintHandler struct {
 	agentHandler           *partner_agent.AgentHandler
 	partnerProfileRepo     *repositories.PartnerProfileRepository
 	printJobRepo           *repositories.PrintJobRepository
+	wsHub                  *websocket.Hub
 }
 
 // NewPrintHandler creates a new print handler
-func NewPrintHandler(uploadDir string, agentHandler *partner_agent.AgentHandler, partnerProfileRepo *repositories.PartnerProfileRepository, printJobRepo *repositories.PrintJobRepository) *PrintHandler {
+func NewPrintHandler(uploadDir string, agentHandler *partner_agent.AgentHandler, partnerProfileRepo *repositories.PartnerProfileRepository, printJobRepo *repositories.PrintJobRepository, wsHub *websocket.Hub) *PrintHandler {
 	return &PrintHandler{
 		uploadDir:          uploadDir,
 		agentHandler:       agentHandler,
 		partnerProfileRepo: partnerProfileRepo,
 		printJobRepo:       printJobRepo,
+		wsHub:              wsHub,
 	}
 }
 
