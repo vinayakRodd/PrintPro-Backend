@@ -88,7 +88,7 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 				"color":       job.Color,
 				"num_copies":  job.NumCopies,
 				"p_type":      job.PType,
-				"created_at":  job.CreatedAt,
+				"created_at":  job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			})
 			continue
 		}
@@ -107,7 +107,7 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 			"color":       job.Color,
 			"num_copies":  job.NumCopies,
 			"p_type":      job.PType,
-			"created_at":  job.CreatedAt,
+			"created_at":  job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 
