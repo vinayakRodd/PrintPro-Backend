@@ -88,13 +88,10 @@ func (h *AgentHandler) QueueJobForAgent(sourceFilePath string) error {
 // The file stays in ready folder, Redis tracks the queue state
 // This ensures the file is available for agent to fetch via RPOPLPUSH
 func (h *AgentHandler) MoveToProcessing(filename string) error {
-	// Check if file exists in ready folder
-	readyPath := filepath.Join(h.readyDir, filename)
-	if _, err := os.Stat(readyPath); os.IsNotExist(err) {
-		return fmt.Errorf("file not found in ready folder: %s", filename)
-	}
+	// OPTIMIZATION: Skip file existence check - already verified in PrintFile handler
+	// This saves a file I/O operation
 
-	// Ensure filename is in Redis ready queue (check first to avoid duplicates)
+	// Ensure filename is in Redis ready queue
 	if h.redisClient == nil {
 		return fmt.Errorf("Redis client is not available - cannot queue file")
 	}
@@ -102,22 +99,8 @@ func (h *AgentHandler) MoveToProcessing(filename string) error {
 	ctx := context.Background()
 	queueKey := "printer:queue:ready"
 	
-	// Check if filename is already in the queue
-	queueItems, err := h.redisClient.LRANGE(ctx, queueKey, 0, -1)
-	if err != nil {
-		log.Printf("WARNING: Failed to check Redis queue, will attempt to push anyway: %v", err)
-		// Continue to try pushing - might be a transient error
-	} else {
-		// Check if filename already exists in queue
-		for _, item := range queueItems {
-			if item == filename {
-				log.Printf("INFO: Filename already in Redis ready queue - File: %s", filename)
-				return nil // Already queued, success
-			}
-		}
-	}
-	
-	// Push filename to Redis ready queue (not already there)
+	// OPTIMIZATION: Just push to Redis - no duplicate check (saves LRANGE operation)
+	// Redis list can have duplicates, and agent will handle it via RPOPLPUSH
 	if err := h.redisClient.LPUSH(ctx, queueKey, filename); err != nil {
 		log.Printf("ERROR: Failed to push filename to Redis queue: %v", err)
 		return fmt.Errorf("failed to queue file in Redis: %v", err)

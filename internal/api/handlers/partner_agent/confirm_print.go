@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
-	"time"
 )
 
 // ConfirmPrint handles requests from partner agent to confirm printing completion
-// Removes filename from Redis processing queue and moves physical file to archived folder
+// Updates database status to "completed" and removes filename from Redis processing queue
+// File stays in ready folder (no file moves) for better performance and reprint capability
 func (h *AgentHandler) ConfirmPrint(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -33,8 +31,17 @@ func (h *AgentHandler) ConfirmPrint(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	processingQueueKey := "printer:queue:processing"
 
-	// Remove filename from processing queue using LREM
-	// count = 1 means remove first occurrence from head to tail
+	// Update database status to "completed" (fast operation, no file moves)
+	if h.printJobRepo != nil {
+		if err := h.printJobRepo.UpdateStatus(ctx, req.Filename, "completed"); err != nil {
+			log.Printf("WARNING: Failed to update print job status: %v", err)
+			// Continue - Redis cleanup is more important
+		} else {
+			log.Printf("INFO: Print job status updated to 'completed' - File: %s", req.Filename)
+		}
+	}
+
+	// Remove filename from processing queue using LREM (fast Redis operation)
 	if h.redisClient != nil {
 		removed, err := h.redisClient.LREM(ctx, processingQueueKey, 1, req.Filename)
 		if err != nil {
@@ -44,50 +51,20 @@ func (h *AgentHandler) ConfirmPrint(w http.ResponseWriter, r *http.Request) {
 		}
 		if removed == 0 {
 			log.Printf("WARNING: Filename not found in processing queue: %s", req.Filename)
-			// Continue anyway - file might have been removed already
+			// Continue anyway - might have been removed already
 		} else {
 			log.Printf("INFO: Filename removed from processing queue - File: %s", req.Filename)
 		}
-
-		// Optionally: Log completion in Redis Set with TTL (24 hours)
-		doneSetKey := "printer:done_today"
-		if err := h.redisClient.SADD(ctx, doneSetKey, req.Filename); err == nil {
-			// Set TTL on the set key (24 hours)
-			h.redisClient.Set(ctx, doneSetKey+":ttl", "1", 24*time.Hour)
-			log.Printf("INFO: Print completion logged in Redis set - File: %s", req.Filename)
-		}
 	}
 
-	// Move physical file from ready folder to archived folder
-	readyPath := filepath.Join(h.readyDir, req.Filename)
-	archivePath := filepath.Join(h.archiveDir, req.Filename)
+	// NOTE: File stays in ready folder - no file moves for better performance
+	// File can be reprinted by clearing Redis key and updating status back to "pending"
 
-	// Check if file exists in ready folder
-	if _, err := os.Stat(readyPath); os.IsNotExist(err) {
-		log.Printf("WARNING: File not found in ready folder: %s (may have been archived already)", req.Filename)
-		// Don't fail - Redis queue is already cleaned up
-	} else {
-		// Ensure archive directory exists
-		if err := os.MkdirAll(h.archiveDir, 0755); err != nil {
-			log.Printf("ERROR: Failed to create archive directory: %v", err)
-			http.Error(w, "Failed to create archive directory", http.StatusInternalServerError)
-			return
-		}
-
-		// Move file to archive
-		if err := os.Rename(readyPath, archivePath); err != nil {
-			log.Printf("ERROR: Failed to archive %s: %v", req.Filename, err)
-			http.Error(w, "Failed to archive file", http.StatusInternalServerError)
-			return
-		}
-		log.Printf("INFO: File moved to archived folder - File: %s", req.Filename)
-	}
-
-	log.Printf("SUCCESS: Print confirmed and job cleaned up - File: %s", req.Filename)
+	log.Printf("SUCCESS: Print confirmed - File: %s (status updated, Redis cleaned, file remains in ready folder)", req.Filename)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":   "success",
-		"message":  "File archived successfully",
+		"message":  "Print confirmed successfully",
 		"filename": req.Filename,
 	})
 }

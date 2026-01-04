@@ -102,3 +102,18 @@ func (r *PrintJobRepository) GetFilenamesByPartnerID(ctx context.Context, partne
 	return filenames, nil
 }
 
+// UpdateStatus updates the status of a print job by filename
+func (r *PrintJobRepository) UpdateStatus(ctx context.Context, filename, status string) error {
+	now := time.Now()
+	_, err := r.db.Exec(ctx,
+		`UPDATE print_jobs 
+		 SET status = $1, updated_at = $2 
+		 WHERE filename = $3`,
+		status, now, filename,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update print job status: %w", err)
+	}
+	return nil
+}
+
