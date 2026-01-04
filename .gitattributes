@@ -1,7 +1,7 @@
 # Prevent test-print folder from being merged
 test-print/ merge=ours
 docs/ merge=ours
-
+migrations/ merge=ours
 
 # Prevent partner agent files from being merged
 partner_agent_updated.py merge=ours

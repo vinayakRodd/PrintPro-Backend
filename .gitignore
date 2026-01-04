@@ -52,6 +52,7 @@ yarn.lock
 # Test print uploads folder - contains user uploaded files
 test-print/
 docs/
+migrations/
 
 # Partner agent files
 partner_agent_updated.py
