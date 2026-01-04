@@ -117,3 +117,53 @@ func (r *PrintJobRepository) UpdateStatus(ctx context.Context, filename, status 
 	return nil
 }
 
+// GetByAccountID retrieves all print jobs for a specific customer (account_id)
+func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64) ([]printjob.PrintJob, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, status, total_cost, created_at, updated_at
+		 FROM print_jobs 
+		 WHERE account_id = $1
+		 ORDER BY created_at DESC`,
+		accountID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get print jobs by account_id: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []printjob.PrintJob
+	for rows.Next() {
+		var job printjob.PrintJob
+		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan print job: %w", err)
+		}
+		jobs = append(jobs, job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating print jobs: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// DeleteByFilenameAndAccountID deletes a print job by filename, but only if it belongs to the specified account_id
+// This ensures customers can only delete their own files
+func (r *PrintJobRepository) DeleteByFilenameAndAccountID(ctx context.Context, filename string, accountID int64) error {
+	result, err := r.db.Exec(ctx,
+		`DELETE FROM print_jobs 
+		 WHERE filename = $1 AND account_id = $2`,
+		filename, accountID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete print job: %w", err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("print job not found or does not belong to this account")
+	}
+
+	return nil
+}
+
