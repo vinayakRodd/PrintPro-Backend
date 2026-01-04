@@ -2,3 +2,7 @@
 test-print/ merge=ours
 docs/ merge=ours
 
+
+# Prevent partner agent files from being merged
+partner_agent_updated.py merge=ours
+internal/api/handlers/partner_agent/ merge=ours
