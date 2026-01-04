@@ -212,15 +212,9 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Push filename to Redis ready queue (if agent handler is available)
-	if h.agentHandler != nil {
-		// QueueJobForAgent will push to Redis, but file is already in ready folder
-		// So we just need to push to Redis queue
-		if err := h.agentHandler.QueueJobForAgent(finalFilePath); err != nil {
-			log.Printf("ERROR: Failed to queue job in Redis: %v (file is saved but not queued)", err)
-			// Don't fail the upload, file is already saved
-		}
-	}
+	// NOTE: File is saved to ready folder but NOT queued in Redis
+	// Files should only be queued when partner explicitly clicks "Print" button
+	// This prevents automatic printing when files are uploaded
 
 	// Get partner_id from shop_name
 	ctx := r.Context()
