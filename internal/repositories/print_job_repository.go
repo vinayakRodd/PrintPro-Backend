@@ -72,11 +72,12 @@ func (r *PrintJobRepository) GetByFilename(ctx context.Context, filename string)
 }
 
 // GetFilenamesByPartnerID retrieves all filenames for a specific partner
+// SECURITY: Only returns files where partner_id matches exactly (not NULL, not 0)
 func (r *PrintJobRepository) GetFilenamesByPartnerID(ctx context.Context, partnerID int64) ([]string, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT DISTINCT filename, created_at
 		 FROM print_jobs 
-		 WHERE partner_id = $1
+		 WHERE partner_id = $1 AND partner_id IS NOT NULL
 		 ORDER BY created_at DESC`,
 		partnerID,
 	)
@@ -100,6 +101,48 @@ func (r *PrintJobRepository) GetFilenamesByPartnerID(ctx context.Context, partne
 	}
 
 	return filenames, nil
+}
+
+// GetByPartnerID retrieves all print jobs for a specific partner
+// SECURITY: Only returns files where partner_id matches exactly (not NULL, not 0)
+// Uses strict equality check to prevent any cross-shop data leakage
+func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64) ([]printjob.PrintJob, error) {
+	// SECURITY: Use strict WHERE clause with explicit type checking
+	rows, err := r.db.Query(ctx,
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, status, total_cost, created_at, updated_at
+		 FROM print_jobs 
+		 WHERE partner_id = $1::bigint AND partner_id IS NOT NULL
+		 ORDER BY created_at DESC`,
+		partnerID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get print jobs by partner_id: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []printjob.PrintJob
+	for rows.Next() {
+		var job printjob.PrintJob
+		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan print job: %w", err)
+		}
+		
+		// SECURITY: Double-check partner_id matches (defensive programming)
+		// This should never happen if the SQL query is correct, but we verify anyway
+		if job.PartnerID != partnerID {
+			// Log error - this indicates a serious database integrity issue
+			// Skip this job - it doesn't belong to this partner
+			continue
+		}
+		
+		jobs = append(jobs, job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating print jobs: %w", err)
+	}
+
+	return jobs, nil
 }
 
 // UpdateStatus updates the status of a print job by filename
@@ -136,6 +179,41 @@ func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64
 		var job printjob.PrintJob
 		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan print job: %w", err)
+		}
+		jobs = append(jobs, job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating print jobs: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// GetByAccountIDAndPartnerID retrieves all print jobs for a specific customer (account_id) AND shop (partner_id)
+// SECURITY: This ensures customers only see files they uploaded to a specific shop
+func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, accountID int64, partnerID int64) ([]printjob.PrintJob, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, status, total_cost, created_at, updated_at
+		 FROM print_jobs 
+		 WHERE account_id = $1 AND partner_id = $2 AND partner_id IS NOT NULL
+		 ORDER BY created_at DESC`,
+		accountID, partnerID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get print jobs by account_id and partner_id: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []printjob.PrintJob
+	for rows.Next() {
+		var job printjob.PrintJob
+		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan print job: %w", err)
+		}
+		// Security verification: double-check partner_id matches
+		if job.PartnerID != partnerID {
+			return nil, fmt.Errorf("security error: print job %d has partner_id %d but expected %d", job.ID, job.PartnerID, partnerID)
 		}
 		jobs = append(jobs, job)
 	}

@@ -218,12 +218,20 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	// Get partner_id from shop_name
 	ctx := r.Context()
-	partnerID, err := h.partnerProfileRepository.GetPartnerIDByShopName(ctx, shopName)
+	
+	// SECURITY: Verify shop exists and get partner_id
+	partnerProfile, err := h.partnerProfileRepository.GetByShopName(ctx, shopName)
 	if err != nil {
-		log.Printf("ERROR: Failed to get partner ID for shop '%s' - %v", shopName, err)
+		log.Printf("ERROR: Failed to get partner profile for shop '%s' - %v", shopName, err)
 		// Don't fail the upload, but log the error
 		log.Printf("WARNING: Print job not created in database due to partner lookup failure")
 	} else {
+		partnerID := partnerProfile.ID
+		
+		// SECURITY: Log detailed information to verify correct shop association
+		log.Printf("INFO: Upload - Shop: '%s', PartnerID: %d, Customer: %s, File: %s", 
+			shopName, partnerID, user.ID, filename)
+		
 		// Convert user.ID (string) to int64 for account_id
 		accountID, err := strconv.ParseInt(user.ID, 10, 64)
 		if err != nil {
@@ -251,8 +259,13 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			// Don't fail the upload, but log the error
 			log.Printf("WARNING: File uploaded but print job not created in database")
 		} else {
-			log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s, Shop: %s, File: %s, PType: %v, Color: %v, NumCopies: %v", 
-				printJob.ID, user.ID, shopName, filename, printJob.PType, printJob.Color, printJob.NumCopies)
+			// SECURITY: Verify the created print job has the correct partner_id
+			if printJob.PartnerID != partnerID {
+				log.Printf("ERROR: SECURITY ISSUE - Print job created with wrong partner_id! Expected: %d, Got: %d, File: %s", 
+					partnerID, printJob.PartnerID, filename)
+			}
+			log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s (account_id: %v), Shop: %s (partner_id: %d), File: %s, PType: %v, Color: %v, NumCopies: %v", 
+				printJob.ID, user.ID, printJob.AccountID, shopName, printJob.PartnerID, filename, printJob.PType, printJob.Color, printJob.NumCopies)
 		}
 	}
 

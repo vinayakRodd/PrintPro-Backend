@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
 	"strconv"
+	"strings"
 )
 
 // ListCustomerFiles lists all files uploaded by the authenticated customer
@@ -42,15 +43,38 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	log.Printf("INFO: Listing files for customer account_id: %d", accountID)
+	// Get shop_name query parameter (REQUIRED)
+	// SECURITY: shop_name is mandatory - customers can only view files for a specific shop
+	shopName := r.URL.Query().Get("shop_name")
+	if shopName == "" {
+		log.Printf("ERROR: shop_name parameter is required but not provided")
+		h.sendErrorResponse(w, http.StatusBadRequest, "Shop name required", "Please provide shop_name query parameter to view files for a specific shop")
+		return
+	}
 
-	// Get all print jobs for this customer from database
-	printJobs, err := h.printJobRepo.GetByAccountID(ctx, accountID)
+	shopName = strings.TrimSpace(shopName)
+	log.Printf("INFO: Customer requested files for shop: %s (account_id: %d)", shopName, accountID)
+
+	// Get partner_id from shop_name
+	partnerProfile, err := h.partnerProfileRepo.GetByShopName(ctx, shopName)
 	if err != nil {
-		log.Printf("ERROR: Failed to get print jobs for account_id %d: %v", accountID, err)
+		log.Printf("ERROR: Shop not found: %s - %v", shopName, err)
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid shop", fmt.Sprintf("Shop '%s' not found", shopName))
+		return
+	}
+
+	partnerID := partnerProfile.ID
+	log.Printf("INFO: Querying files for customer account_id: %d AND shop '%s' (partner_id: %d)", accountID, shopName, partnerID)
+
+	// SECURITY: Query database with BOTH account_id AND partner_id - database-level filtering
+	// This ensures customers only see files they uploaded to the specific shop
+	printJobs, err := h.printJobRepo.GetByAccountIDAndPartnerID(ctx, accountID, partnerID)
+	if err != nil {
+		log.Printf("ERROR: Failed to get print jobs for account_id %d and partner_id %d: %v", accountID, partnerID, err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to retrieve files")
 		return
 	}
+	log.Printf("INFO: Found %d files for customer account_id: %d in shop '%s' (partner_id: %d)", len(printJobs), accountID, shopName, partnerID)
 
 	readyDir := h.agentHandler.GetReadyDir()
 	fileList := []map[string]interface{}{}

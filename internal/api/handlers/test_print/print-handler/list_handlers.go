@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
+	"print-pro-backend/internal/models/printjob"
 	"strconv"
 )
 
@@ -54,19 +55,44 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	partnerID := partnerProfile.ID
-	log.Printf("INFO: Listing files for partner_id: %d (account_id: %d)", partnerID, accountID)
+	log.Printf("INFO: Listing files for partner_id: %d (account_id: %d, shop: %s)", partnerID, accountID, partnerProfile.ShopName)
 
-	// Get all filenames that belong to this partner from database
-	partnerFilenames, err := h.printJobRepo.GetFilenamesByPartnerID(ctx, partnerID)
+	// SECURITY: Get all print jobs that belong to THIS partner ONLY from database
+	// This ensures partners only see files uploaded to their shop, not other shops
+	// Database is the source of truth - we ONLY iterate through files in the database for this partner
+	// Using GetByPartnerID to get full records and verify partner_id matches
+	partnerJobs, err := h.printJobRepo.GetByPartnerID(ctx, partnerID)
 	if err != nil {
-		log.Printf("WARNING: Failed to get partner filenames from database: %v (will show all files)", err)
-		partnerFilenames = []string{} // Empty list - will show no files if DB lookup fails
+		log.Printf("ERROR: Failed to get partner print jobs from database: %v (will show no files for security)", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to retrieve files")
+		return
 	}
+	log.Printf("INFO: Found %d print jobs in database belonging to partner_id %d (shop-specific filtering applied)", len(partnerJobs), partnerID)
 
-	// Create a map for quick lookup of partner's filenames
-	partnerFilesMap := make(map[string]bool)
-	for _, filename := range partnerFilenames {
-		partnerFilesMap[filename] = true
+	// SECURITY: Double-check and filter out any jobs that don't match partner_id
+	// This is a defensive check in case the database query somehow returns wrong data
+	filteredJobs := []printjob.PrintJob{}
+	for _, job := range partnerJobs {
+		if job.PartnerID == partnerID {
+			filteredJobs = append(filteredJobs, job)
+		} else {
+			log.Printf("ERROR: SECURITY ISSUE - Print job ID %d (filename: %s) has partner_id %d but expected %d - REMOVING FROM LIST", 
+				job.ID, job.Filename, job.PartnerID, partnerID)
+		}
+	}
+	partnerJobs = filteredJobs
+	log.Printf("INFO: After security filtering, %d print jobs remain for partner_id %d", len(partnerJobs), partnerID)
+
+	// If no files found for this partner, return empty list
+	if len(partnerJobs) == 0 {
+		log.Printf("INFO: No files found for partner_id %d", partnerID)
+		h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+			"success": true,
+			"files":   []map[string]interface{}{},
+			"count":   0,
+			"message": "No files found for this shop",
+		})
+		return
 	}
 
 	readyDir := h.agentHandler.GetReadyDir()
@@ -92,62 +118,65 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		processingQueueMap[filename] = true
 	}
 
-	// Read all files from ready folder
-	readyFiles, err := os.ReadDir(readyDir)
-	if err == nil {
-		for _, file := range readyFiles {
-			if file.IsDir() {
-				continue
-			}
-			
-			filename := file.Name()
-			
-			// FILTER: Only include files that:
-			// 1. Belong to this partner (in print_jobs table)
-			// 2. Actually exist in the ready folder
-			if !partnerFilesMap[filename] {
-				log.Printf("DEBUG: Skipping file '%s' - not in print_jobs for partner_id %d", filename, partnerID)
-				continue
-			}
-			
-			// Verify file actually exists in ready folder (double check)
-			filePath := filepath.Join(readyDir, filename)
-			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				log.Printf("DEBUG: Skipping file '%s' - exists in print_jobs but not in ready folder", filename)
-				continue
-			}
-			
-			// Include all file types (PDFs, images, documents, etc.) - but only for this partner
-			info, err := file.Info()
-			if err != nil {
-				log.Printf("WARNING: Failed to get file info for '%s' - %v", filename, err)
-				continue
-			}
-
-			// Determine status based on Redis queues
-			var status string
-			if processingQueueMap[filename] {
-				// File is in processing queue
-				status = "processing"
-				processingCount++
-			} else if readyQueueMap[filename] {
-				// File is in ready queue
-				status = "ready"
-				readyCount++
-			} else {
-				// File exists in ready folder but not in any queue (newly uploaded, not queued yet)
-				status = "ready"
-				readyCount++
-			}
-
-			fileList = append(fileList, map[string]interface{}{
-				"filename":    filename,
-				"size":        info.Size(),
-				"modified_at": info.ModTime().Format("2006-01-02T15:04:05Z07:00"),
-				"status":      status,
-				"preview_url": fmt.Sprintf("/api/test-print/preview?filename=%s", filename),
-			})
+	// SECURITY: ONLY iterate through files that belong to this partner (from database)
+	// Do NOT read all files from filesystem - use database as source of truth
+	// Create a map to track which files we've verified belong to this partner
+	verifiedFiles := make(map[string]printjob.PrintJob)
+	for _, job := range partnerJobs {
+		// Double-check: Only include if partner_id matches
+		if job.PartnerID == partnerID {
+			verifiedFiles[job.Filename] = job
+		} else {
+			log.Printf("ERROR: SECURITY - Job ID %d (file: %s) has partner_id %d, expected %d - EXCLUDED", 
+				job.ID, job.Filename, job.PartnerID, partnerID)
 		}
+	}
+	
+	log.Printf("INFO: Verified %d files belong to partner_id %d (shop: %s)", len(verifiedFiles), partnerID, partnerProfile.ShopName)
+	
+	for filename, job := range verifiedFiles {
+		// SECURITY: Final verification - ensure this file belongs to this partner
+		if job.PartnerID != partnerID {
+			log.Printf("ERROR: CRITICAL SECURITY ISSUE - File '%s' (job ID: %d) has partner_id %d but expected %d - SKIPPING", 
+				filename, job.ID, job.PartnerID, partnerID)
+			continue
+		}
+		
+		// Verify file actually exists in ready folder
+		filePath := filepath.Join(readyDir, filename)
+		fileInfo, err := os.Stat(filePath)
+		if os.IsNotExist(err) {
+			log.Printf("DEBUG: File '%s' exists in database for partner_id %d but not in ready folder (may be archived)", filename, partnerID)
+			continue
+		}
+		if err != nil {
+			log.Printf("WARNING: Failed to stat file '%s' - %v", filename, err)
+			continue
+		}
+
+		// Determine status based on Redis queues
+		var status string
+		if processingQueueMap[filename] {
+			// File is in processing queue
+			status = "processing"
+			processingCount++
+		} else if readyQueueMap[filename] {
+			// File is in ready queue
+			status = "ready"
+			readyCount++
+		} else {
+			// File exists in ready folder but not in any queue (newly uploaded, not queued yet)
+			status = "ready"
+			readyCount++
+		}
+
+		fileList = append(fileList, map[string]interface{}{
+			"filename":    filename,
+			"size":        fileInfo.Size(),
+			"modified_at": fileInfo.ModTime().Format("2006-01-02T15:04:05Z07:00"),
+			"status":      status,
+			"preview_url": fmt.Sprintf("/api/test-print/preview?filename=%s", filename),
+		})
 	}
 
 	log.Printf("SUCCESS: Files listed from Redis queues - Partner: %s, Ready: %d, Processing: %d, Total: %d",
