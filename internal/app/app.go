@@ -129,6 +129,7 @@ func (a *Application) RegisterRoutes() {
 	http.HandleFunc("/api/test-print/print", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PrintFile))))
 	http.HandleFunc("/api/test-print/queue", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.QueueFile))))
 	http.HandleFunc("/api/test-print/preview", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PreviewPDF))))
+	http.HandleFunc("/api/test-print/edit-options", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.EditPrintJobOptions))))
 
 	// Register partner agent routes (no auth required - agent will authenticate separately)
 	http.HandleFunc("/api/partner-agent/fetch-job", cors.CORS(agentHandler.FetchJob))
