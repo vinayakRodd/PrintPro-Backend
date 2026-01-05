@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"fmt"
+	"strings"
 	"print-pro-backend/internal/models/printjob"
 	"time"
 
@@ -157,6 +158,88 @@ func (r *PrintJobRepository) UpdateStatus(ctx context.Context, filename, status 
 	if err != nil {
 		return fmt.Errorf("failed to update print job status: %w", err)
 	}
+	return nil
+}
+
+// UpdatePrintOptions updates print job options (color, num_copies, start_page, end_page)
+// SECURITY: Only updates if the file belongs to the specified partner_id
+// For customers: accountID should be provided to verify ownership
+// Only updates fields that are provided (non-nil)
+func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename string, partnerID int64, accountID *int64, color *bool, numCopies *int, startPage *int, endPage *int) error {
+	// Build dynamic UPDATE query - only update fields that are provided (non-nil)
+	updates := []string{}
+	args := []interface{}{}
+	argIndex := 1
+	
+	if color != nil {
+		updates = append(updates, fmt.Sprintf("color = $%d", argIndex))
+		args = append(args, *color)
+		argIndex++
+	}
+	
+	if numCopies != nil {
+		updates = append(updates, fmt.Sprintf("num_copies = $%d::integer", argIndex))
+		args = append(args, *numCopies)
+		argIndex++
+	}
+	
+	if startPage != nil {
+		updates = append(updates, fmt.Sprintf("start_page = $%d::integer", argIndex))
+		args = append(args, *startPage)
+		argIndex++
+	}
+	
+	if endPage != nil {
+		updates = append(updates, fmt.Sprintf("end_page = $%d::integer", argIndex))
+		args = append(args, *endPage)
+		argIndex++
+	}
+	
+	// If no fields to update, return early
+	if len(updates) == 0 {
+		return fmt.Errorf("no fields to update")
+	}
+	
+	// Add updated_at (always update timestamp)
+	// Use CURRENT_TIMESTAMP to avoid type casting issues with dynamic queries
+	updates = append(updates, "updated_at = CURRENT_TIMESTAMP")
+	
+	// Build WHERE clause with security checks
+	// Parameter indices continue from where SET clause left off
+	whereParamIndex := argIndex
+	args = append(args, filename, partnerID)
+	whereClause := fmt.Sprintf("filename = $%d AND partner_id = $%d::bigint", whereParamIndex, whereParamIndex+1)
+	
+	// If accountID is provided (for customer verification), add account_id check
+	if accountID != nil {
+		args = append(args, *accountID)
+		whereClause += fmt.Sprintf(" AND account_id = $%d::bigint", whereParamIndex+2)
+	}
+	
+	// Build the SET clause
+	setClause := strings.Join(updates, ", ")
+	
+	query := fmt.Sprintf(
+		`UPDATE print_jobs 
+		 SET %s 
+		 WHERE %s`,
+		setClause,
+		whereClause,
+	)
+	
+	result, err := r.db.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update print job options: %w", err)
+	}
+	
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		if accountID != nil {
+			return fmt.Errorf("print job not found or does not belong to this customer")
+		}
+		return fmt.Errorf("print job not found or does not belong to this partner")
+	}
+	
 	return nil
 }
 
