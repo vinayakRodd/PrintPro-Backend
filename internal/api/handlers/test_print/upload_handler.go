@@ -126,8 +126,39 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("DEBUG: Upload request - Shop: %s, Customer: %s, PType: %v, Color: %v, NumCopies: %v", 
-		shopName, user.ID, pTypePtr, colorPtr, numCopiesPtr)
+	// Parse start_page (optional, 1-indexed)
+	startPageStr := strings.TrimSpace(r.FormValue("start_page"))
+	var startPagePtr *int
+	if startPageStr != "" {
+		if startPage, err := strconv.Atoi(startPageStr); err == nil && startPage > 0 {
+			startPagePtr = &startPage
+		} else {
+			log.Printf("WARNING: Invalid start_page value '%s', ignoring", startPageStr)
+		}
+	}
+
+	// Parse end_page (optional, 1-indexed)
+	endPageStr := strings.TrimSpace(r.FormValue("end_page"))
+	var endPagePtr *int
+	if endPageStr != "" {
+		if endPage, err := strconv.Atoi(endPageStr); err == nil && endPage > 0 {
+			endPagePtr = &endPage
+		} else {
+			log.Printf("WARNING: Invalid end_page value '%s', ignoring", endPageStr)
+		}
+	}
+
+	// Validate page range if both are provided
+	if startPagePtr != nil && endPagePtr != nil {
+		if *startPagePtr > *endPagePtr {
+			log.Printf("WARNING: Invalid page range - start_page (%d) > end_page (%d), ignoring page range", *startPagePtr, *endPagePtr)
+			startPagePtr = nil
+			endPagePtr = nil
+		}
+	}
+
+	log.Printf("DEBUG: Upload request - Shop: %s, Customer: %s, PType: %v, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v", 
+		shopName, user.ID, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr)
 
 	// Get file from form
 	file, header, err := r.FormFile("file")
@@ -253,7 +284,7 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			accountIDPtr = &accountID
 		}
 		
-		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr)
+		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr)
 		if err != nil {
 			log.Printf("ERROR: Failed to create print job in database - %v", err)
 			// Don't fail the upload, but log the error
@@ -264,8 +295,8 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				log.Printf("ERROR: SECURITY ISSUE - Print job created with wrong partner_id! Expected: %d, Got: %d, File: %s", 
 					partnerID, printJob.PartnerID, filename)
 			}
-			log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s (account_id: %v), Shop: %s (partner_id: %d), File: %s, PType: %v, Color: %v, NumCopies: %v", 
-				printJob.ID, user.ID, printJob.AccountID, shopName, printJob.PartnerID, filename, printJob.PType, printJob.Color, printJob.NumCopies)
+			log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s (account_id: %v), Shop: %s (partner_id: %d), File: %s, PType: %v, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v", 
+				printJob.ID, user.ID, printJob.AccountID, shopName, printJob.PartnerID, filename, printJob.PType, printJob.Color, printJob.NumCopies, printJob.StartPage, printJob.EndPage)
 		}
 	}
 

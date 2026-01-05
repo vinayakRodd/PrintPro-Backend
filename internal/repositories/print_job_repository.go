@@ -20,7 +20,7 @@ func NewPrintJobRepository(db *pgxpool.Pool) *PrintJobRepository {
 }
 
 // Create creates a new print job in the database
-func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partnerID int64, filename, fileURL string, pType *string, color *bool, numCopies *int) (*printjob.PrintJob, error) {
+func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partnerID int64, filename, fileURL string, pType *string, color *bool, numCopies *int, startPage *int, endPage *int) (*printjob.PrintJob, error) {
 	var job printjob.PrintJob
 	now := time.Now()
 	status := printjob.StatusPending
@@ -39,11 +39,11 @@ func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partn
 	}
 
 	err := r.db.QueryRow(ctx,
-		`INSERT INTO print_jobs (account_id, partner_id, filename, file_url, p_type, color, num_copies, status, created_at, updated_at) 
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
-		 RETURNING id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, status, total_cost, created_at, updated_at`,
-		accountID, partnerID, filename, fileURL, pType, colorValue, numCopiesValue, status, now, now,
-	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
+		`INSERT INTO print_jobs (account_id, partner_id, filename, file_url, p_type, color, num_copies, start_page, end_page, status, created_at, updated_at) 
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
+		 RETURNING id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, status, total_cost, created_at, updated_at`,
+		accountID, partnerID, filename, fileURL, pType, colorValue, numCopiesValue, startPage, endPage, status, now, now,
+	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create print job: %w", err)
@@ -56,13 +56,13 @@ func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partn
 func (r *PrintJobRepository) GetByFilename(ctx context.Context, filename string) (*printjob.PrintJob, error) {
 	var job printjob.PrintJob
 	err := r.db.QueryRow(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE filename = $1
 		 ORDER BY created_at DESC
 		 LIMIT 1`,
 		filename,
-	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
+	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get print job by filename: %w", err)
@@ -109,7 +109,7 @@ func (r *PrintJobRepository) GetFilenamesByPartnerID(ctx context.Context, partne
 func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64) ([]printjob.PrintJob, error) {
 	// SECURITY: Use strict WHERE clause with explicit type checking
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE partner_id = $1::bigint AND partner_id IS NOT NULL
 		 ORDER BY created_at DESC`,
@@ -123,7 +123,7 @@ func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64
 	var jobs []printjob.PrintJob
 	for rows.Next() {
 		var job printjob.PrintJob
-		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
+		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan print job: %w", err)
 		}
 		
@@ -163,7 +163,7 @@ func (r *PrintJobRepository) UpdateStatus(ctx context.Context, filename, status 
 // GetByAccountID retrieves all print jobs for a specific customer (account_id)
 func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE account_id = $1
 		 ORDER BY created_at DESC`,
@@ -177,7 +177,7 @@ func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64
 	var jobs []printjob.PrintJob
 	for rows.Next() {
 		var job printjob.PrintJob
-		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
+		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan print job: %w", err)
 		}
 		jobs = append(jobs, job)
@@ -194,7 +194,7 @@ func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64
 // SECURITY: This ensures customers only see files they uploaded to a specific shop
 func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, accountID int64, partnerID int64) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE account_id = $1 AND partner_id = $2 AND partner_id IS NOT NULL
 		 ORDER BY created_at DESC`,
@@ -208,7 +208,7 @@ func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, acc
 	var jobs []printjob.PrintJob
 	for rows.Next() {
 		var job printjob.PrintJob
-		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
+		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan print job: %w", err)
 		}
 		// Security verification: double-check partner_id matches

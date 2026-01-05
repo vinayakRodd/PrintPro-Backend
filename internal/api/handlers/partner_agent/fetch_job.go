@@ -71,11 +71,13 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	// This runs in parallel with file opening, so minimal impact
 	var colorValue bool = false // Default to black & white
 	var numCopiesValue int = 1   // Default to 1 copy
+	var startPageValue *int = nil // Default to nil (print all pages from start)
+	var endPageValue *int = nil   // Default to nil (print all pages to end)
 	
 	if h.printJobRepo != nil {
 		printJob, err := h.printJobRepo.GetByFilename(ctx, fileName)
 		if err != nil {
-			log.Printf("WARNING: Failed to get print job for filename '%s': %v (using defaults: color=false, copies=1)", fileName, err)
+			log.Printf("WARNING: Failed to get print job for filename '%s': %v (using defaults: color=false, copies=1, all pages)", fileName, err)
 		} else {
 			// Use values from database, with defaults if nil
 			if printJob.Color != nil {
@@ -84,10 +86,17 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 			if printJob.NumCopies != nil {
 				numCopiesValue = *printJob.NumCopies
 			}
-			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d", fileName, colorValue, numCopiesValue)
+			if printJob.StartPage != nil {
+				startPageValue = printJob.StartPage
+			}
+			if printJob.EndPage != nil {
+				endPageValue = printJob.EndPage
+			}
+			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v", 
+				fileName, colorValue, numCopiesValue, startPageValue, endPageValue)
 		}
 	} else {
-		log.Printf("WARNING: PrintJobRepository not available, using defaults (color=false, copies=1)")
+		log.Printf("WARNING: PrintJobRepository not available, using defaults (color=false, copies=1, all pages)")
 	}
 
 	// Set headers so the agent knows the filename and print parameters
@@ -98,6 +107,14 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	// Send print parameters as headers for partner agent
 	w.Header().Set("X-Print-Color", fmt.Sprintf("%v", colorValue))      // "true" or "false"
 	w.Header().Set("X-Print-Copies", fmt.Sprintf("%d", numCopiesValue)) // Number of copies
+	
+	// Send page range parameters (only if specified)
+	if startPageValue != nil {
+		w.Header().Set("X-Print-Start-Page", fmt.Sprintf("%d", *startPageValue))
+	}
+	if endPageValue != nil {
+		w.Header().Set("X-Print-End-Page", fmt.Sprintf("%d", *endPageValue))
+	}
 	
 	// Set content type based on file extension
 	ext := strings.ToLower(filepath.Ext(fileName))
