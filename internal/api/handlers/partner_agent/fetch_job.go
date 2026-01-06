@@ -2,6 +2,7 @@ package partner_agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -74,6 +75,7 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	var startPageValue *int = nil // Default to nil (print all pages from start)
 	var endPageValue *int = nil   // Default to nil (print all pages to end)
 	var pageFilterTypeValue *string = nil // Default to nil (agent will treat as "all")
+	var individualColorPagesValue []int = nil // Default to nil (use global color setting)
 	
 	if h.printJobRepo != nil {
 		printJob, err := h.printJobRepo.GetByFilename(ctx, fileName)
@@ -96,8 +98,11 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 			if printJob.PageFilterType != nil {
 				pageFilterTypeValue = printJob.PageFilterType
 			}
-			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v, PageFilterType: %v", 
-				fileName, colorValue, numCopiesValue, startPageValue, endPageValue, pageFilterTypeValue)
+			if printJob.IndividualColorPrintPages != nil && len(printJob.IndividualColorPrintPages) > 0 {
+				individualColorPagesValue = printJob.IndividualColorPrintPages
+			}
+			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v", 
+				fileName, colorValue, numCopiesValue, startPageValue, endPageValue, pageFilterTypeValue, individualColorPagesValue)
 		}
 	} else {
 		log.Printf("WARNING: PrintJobRepository not available, using defaults (color=false, copies=1, all pages)")
@@ -121,6 +126,13 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if pageFilterTypeValue != nil {
 		w.Header().Set("X-Print-Page-Filter", fmt.Sprintf("%s", *pageFilterTypeValue))
+	}
+	if individualColorPagesValue != nil && len(individualColorPagesValue) > 0 {
+		// Convert array to JSON string for header
+		individualColorPagesJSON, err := json.Marshal(individualColorPagesValue)
+		if err == nil {
+			w.Header().Set("X-Print-Individual-Color-Pages", string(individualColorPagesJSON))
+		}
 	}
 	
 	// Set content type based on file extension

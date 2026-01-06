@@ -171,18 +171,19 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		}
 
 		fileList = append(fileList, map[string]interface{}{
-			"filename":         filename,
-			"size":             fileInfo.Size(),
-			"modified_at":      fileInfo.ModTime().Format("2006-01-02T15:04:05Z07:00"),
-			"status":           status,
-			"preview_url":      fmt.Sprintf("/api/test-print/preview?filename=%s", filename),
-			"color":            job.Color,
-			"num_copies":       job.NumCopies,
-			"p_type":           job.PType,
-			"start_page":       job.StartPage,
-			"end_page":         job.EndPage,
-			"page_filter_type": job.PageFilterType,
-			"created_at":       job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			"filename":                    filename,
+			"size":                        fileInfo.Size(),
+			"modified_at":                 fileInfo.ModTime().Format("2006-01-02T15:04:05Z07:00"),
+			"status":                      status,
+			"preview_url":                 fmt.Sprintf("/api/test-print/preview?filename=%s", filename),
+			"color":                       job.Color,
+			"num_copies":                  job.NumCopies,
+			"p_type":                      job.PType,
+			"start_page":                  job.StartPage,
+			"end_page":                    job.EndPage,
+			"page_filter_type":            job.PageFilterType,
+			"individual_color_print_pages": job.IndividualColorPrintPages,
+			"created_at":                  job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 

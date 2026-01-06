@@ -160,6 +160,20 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Parse individual_color_print_pages (optional): JSON array of page numbers
+	// Example: "[1, 3, 5]" means pages 1, 3, and 5 should be printed in color
+	individualColorPagesStr := strings.TrimSpace(r.FormValue("individual_color_print_pages"))
+	var individualColorPages []int
+	if individualColorPagesStr != "" {
+		if err := json.Unmarshal([]byte(individualColorPagesStr), &individualColorPages); err != nil {
+			log.Printf("WARNING: Invalid individual_color_print_pages JSON '%s' - %v, ignoring", individualColorPagesStr, err)
+			individualColorPages = nil
+		} else if len(individualColorPages) == 0 {
+			// Empty array is treated as nil (no individual color pages)
+			individualColorPages = nil
+		}
+	}
+
 	// Validate page range if both are provided
 	if startPagePtr != nil && endPagePtr != nil {
 		if *startPagePtr > *endPagePtr {
@@ -169,8 +183,8 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("DEBUG: Upload request - Shop: %s, Customer: %s, PType: %v, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v, PageFilterType: %v", 
-		shopName, user.ID, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr)
+	log.Printf("DEBUG: Upload request - Shop: %s, Customer: %s, PType: %v, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v", 
+		shopName, user.ID, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages)
 
 	// Get file from form
 	file, header, err := r.FormFile("file")
@@ -296,7 +310,7 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			accountIDPtr = &accountID
 		}
 		
-		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr)
+		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages)
 		if err != nil {
 			log.Printf("ERROR: Failed to create print job in database - %v", err)
 			// Don't fail the upload, but log the error

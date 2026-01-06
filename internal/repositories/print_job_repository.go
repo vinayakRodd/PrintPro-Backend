@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"print-pro-backend/internal/models/printjob"
@@ -21,7 +22,7 @@ func NewPrintJobRepository(db *pgxpool.Pool) *PrintJobRepository {
 }
 
 // Create creates a new print job in the database
-func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partnerID int64, filename, fileURL string, pType *string, color *bool, numCopies *int, startPage *int, endPage *int, pageFilterType *string) (*printjob.PrintJob, error) {
+func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partnerID int64, filename, fileURL string, pType *string, color *bool, numCopies *int, startPage *int, endPage *int, pageFilterType *string, individualColorPages []int) (*printjob.PrintJob, error) {
 	var job printjob.PrintJob
 	now := time.Now()
 	status := printjob.StatusPending
@@ -48,12 +49,29 @@ func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partn
 		}
 	}
 
+	// Convert individualColorPages slice to JSONB for PostgreSQL
+	var individualColorPagesJSON []byte
+	if individualColorPages != nil && len(individualColorPages) > 0 {
+		var err error
+		individualColorPagesJSON, err = json.Marshal(individualColorPages)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal individual_color_print_pages: %w", err)
+		}
+	} else {
+		individualColorPagesJSON = nil // NULL in database
+	}
+
+	var individualColorPagesJSONB interface{}
+	if individualColorPagesJSON != nil {
+		individualColorPagesJSONB = string(individualColorPagesJSON)
+	}
+
 	err := r.db.QueryRow(ctx,
-		`INSERT INTO print_jobs (account_id, partner_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, status, created_at, updated_at) 
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
-		 RETURNING id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, status, total_cost, created_at, updated_at`,
-		accountID, partnerID, filename, fileURL, pType, colorValue, numCopiesValue, startPage, endPage, pageFilter, status, now, now,
-	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
+		`INSERT INTO print_jobs (account_id, partner_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, status, created_at, updated_at) 
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
+		 RETURNING id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, status, total_cost, created_at, updated_at`,
+		accountID, partnerID, filename, fileURL, pType, colorValue, numCopiesValue, startPage, endPage, pageFilter, individualColorPagesJSONB, status, now, now,
+	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType, &job.IndividualColorPrintPages, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create print job: %w", err)
@@ -62,22 +80,82 @@ func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partn
 	return &job, nil
 }
 
+// scanJSONBArray scans a JSONB array column into a []int slice
+func scanJSONBArray(src interface{}) ([]int, error) {
+	if src == nil {
+		return nil, nil
+	}
+	
+	// Handle different types that PostgreSQL might return
+	var jsonBytes []byte
+	switch v := src.(type) {
+	case []byte:
+		jsonBytes = v
+	case string:
+		jsonBytes = []byte(v)
+	case []interface{}:
+		// PostgreSQL JSONB arrays are sometimes returned as []interface{}
+		// Convert []interface{} to []int
+		result := make([]int, 0, len(v))
+		for _, item := range v {
+			switch val := item.(type) {
+			case float64:
+				// JSON numbers are unmarshaled as float64
+				result = append(result, int(val))
+			case int:
+				result = append(result, val)
+			case int64:
+				result = append(result, int(val))
+			default:
+				return nil, fmt.Errorf("cannot convert %T to int in JSONB array", item)
+			}
+		}
+		return result, nil
+	default:
+		// Try to marshal and unmarshal as fallback
+		var err error
+		jsonBytes, err = json.Marshal(src)
+		if err != nil {
+			return nil, fmt.Errorf("cannot scan %T into []int: %w", src, err)
+		}
+	}
+	
+	if len(jsonBytes) == 0 {
+		return nil, nil
+	}
+	
+	var result []int
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSONB array: %w", err)
+	}
+	
+	return result, nil
+}
+
 // GetByFilename retrieves a print job by filename
 func (r *PrintJobRepository) GetByFilename(ctx context.Context, filename string) (*printjob.PrintJob, error) {
 	var job printjob.PrintJob
+	var individualColorPagesJSON interface{}
+	
 	err := r.db.QueryRow(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE filename = $1
 		 ORDER BY created_at DESC
 		 LIMIT 1`,
 		filename,
-	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
-
+	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType, &individualColorPagesJSON, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
+	
 	if err != nil {
 		return nil, fmt.Errorf("failed to get print job by filename: %w", err)
 	}
-
+	
+	// Parse JSONB array
+	job.IndividualColorPrintPages, err = scanJSONBArray(individualColorPagesJSON)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse individual_color_print_pages: %w", err)
+	}
+	
 	return &job, nil
 }
 
@@ -113,13 +191,38 @@ func (r *PrintJobRepository) GetFilenamesByPartnerID(ctx context.Context, partne
 	return filenames, nil
 }
 
+// scanPrintJobRow scans a single row from a query result into a PrintJob struct
+func (r *PrintJobRepository) scanPrintJobRow(rows interface {
+	Scan(dest ...interface{}) error
+}) (*printjob.PrintJob, error) {
+	var job printjob.PrintJob
+	var individualColorPagesJSON interface{}
+	
+	err := rows.Scan(
+		&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL,
+		&job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType,
+		&individualColorPagesJSON, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Parse JSONB array
+	job.IndividualColorPrintPages, err = scanJSONBArray(individualColorPagesJSON)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse individual_color_print_pages: %w", err)
+	}
+	
+	return &job, nil
+}
+
 // GetByPartnerID retrieves all print jobs for a specific partner
 // SECURITY: Only returns files where partner_id matches exactly (not NULL, not 0)
 // Uses strict equality check to prevent any cross-shop data leakage
 func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64) ([]printjob.PrintJob, error) {
 	// SECURITY: Use strict WHERE clause with explicit type checking
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE partner_id = $1::bigint AND partner_id IS NOT NULL
 		 ORDER BY created_at DESC`,
@@ -132,8 +235,8 @@ func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64
 
 	var jobs []printjob.PrintJob
 	for rows.Next() {
-		var job printjob.PrintJob
-		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
+		job, err := r.scanPrintJobRow(rows)
+		if err != nil {
 			return nil, fmt.Errorf("failed to scan print job: %w", err)
 		}
 		
@@ -145,7 +248,7 @@ func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64
 			continue
 		}
 		
-		jobs = append(jobs, job)
+		jobs = append(jobs, *job)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -174,7 +277,7 @@ func (r *PrintJobRepository) UpdateStatus(ctx context.Context, filename, status 
 // SECURITY: Only updates if the file belongs to the specified partner_id
 // For customers: accountID should be provided to verify ownership
 // Only updates fields that are provided (non-nil)
-func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename string, partnerID int64, accountID *int64, color *bool, numCopies *int, startPage *int, endPage *int, pageFilterType *string) error {
+func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename string, partnerID int64, accountID *int64, color *bool, numCopies *int, startPage *int, endPage *int, pageFilterType *string, individualColorPages *[]int) error {
 	// Build dynamic UPDATE query - only update fields that are provided (non-nil)
 	updates := []string{}
 	args := []interface{}{}
@@ -209,6 +312,29 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 		args = append(args, *pageFilterType)
 		argIndex++
 	}
+
+	// Handle individual_color_print_pages update
+	// individualColorPages is a pointer:
+	// - nil pointer = field not provided, don't update
+	// - non-nil pointer with empty slice = clear (set to NULL)
+	// - non-nil pointer with values = set to those values
+	if individualColorPages != nil {
+		if len(*individualColorPages) == 0 {
+			// Empty array provided - clear it (set to NULL)
+			updates = append(updates, fmt.Sprintf("individual_color_print_pages = NULL"))
+			// No args needed for NULL
+		} else {
+			// Non-empty array provided - set to these values
+			individualColorPagesJSON, err := json.Marshal(*individualColorPages)
+			if err != nil {
+				return fmt.Errorf("failed to marshal individual_color_print_pages: %w", err)
+			}
+			updates = append(updates, fmt.Sprintf("individual_color_print_pages = $%d::jsonb", argIndex))
+			args = append(args, string(individualColorPagesJSON))
+			argIndex++
+		}
+	}
+	// If individualColorPages is nil pointer, don't add to updates (don't change existing value)
 	
 	// If no fields to update, return early
 	if len(updates) == 0 {
@@ -261,7 +387,7 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 // GetByAccountID retrieves all print jobs for a specific customer (account_id)
 func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE account_id = $1
 		 ORDER BY created_at DESC`,
@@ -274,11 +400,11 @@ func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64
 
 	var jobs []printjob.PrintJob
 	for rows.Next() {
-		var job printjob.PrintJob
-		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
+		job, err := r.scanPrintJobRow(rows)
+		if err != nil {
 			return nil, fmt.Errorf("failed to scan print job: %w", err)
 		}
-		jobs = append(jobs, job)
+		jobs = append(jobs, *job)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -293,7 +419,7 @@ func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64
 // Excludes completed files from the results
 func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, accountID int64, partnerID int64) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE account_id = $1 AND partner_id = $2 AND partner_id IS NOT NULL AND (status IS NULL OR status != 'completed')
 		 ORDER BY created_at DESC`,
@@ -306,15 +432,15 @@ func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, acc
 
 	var jobs []printjob.PrintJob
 	for rows.Next() {
-		var job printjob.PrintJob
-		if err := rows.Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt); err != nil {
+		job, err := r.scanPrintJobRow(rows)
+		if err != nil {
 			return nil, fmt.Errorf("failed to scan print job: %w", err)
 		}
 		// Security verification: double-check partner_id matches
 		if job.PartnerID != partnerID {
 			return nil, fmt.Errorf("security error: print job %d has partner_id %d but expected %d", job.ID, job.PartnerID, partnerID)
 		}
-		jobs = append(jobs, job)
+		jobs = append(jobs, *job)
 	}
 
 	if err := rows.Err(); err != nil {
