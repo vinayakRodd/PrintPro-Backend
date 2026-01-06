@@ -19,7 +19,12 @@ type Services struct {
 	EmailService      *email.EmailService
 	OTPService        *otp.OTPService
 	JWTService        *jwt.JWTService
-	RateLimiter       *rate_limiter.RateLimiter
+	// Rate limiters for different endpoint categories
+	AuthRateLimiter    *rate_limiter.RateLimiter // 5 req/min - Stop brute force attacks
+	SearchRateLimiter  *rate_limiter.RateLimiter // 20 req/min - Save DB resources
+	ProfileRateLimiter *rate_limiter.RateLimiter // 50 req/min - Normal UX
+	// Legacy: Keep for backward compatibility (defaults to ProfileRateLimiter)
+	RateLimiter *rate_limiter.RateLimiter
 }
 
 // setupServices initializes all services
@@ -40,8 +45,15 @@ func setupServices(
 	otpService := otp.NewOTPService(redisClient)
 	jwtService := jwt.NewJWTService(cfg.JWTSecret)
 
-	// Initialize rate limiter (100 requests per minute)
-	rateLimiter := rate_limiter.NewRateLimiter(redisClient, 100, time.Minute)
+	// Initialize rate limiters for different endpoint categories
+	// Auth endpoints: 5 req/min - Stop brute force attacks on login/signup
+	authRateLimiter := rate_limiter.NewRateLimiter(redisClient, 5, time.Minute)
+	
+	// Search endpoints: 20 req/min - Save DB resources for heavy queries
+	searchRateLimiter := rate_limiter.NewRateLimiter(redisClient, 20, time.Minute)
+	
+	// Profile/Data endpoints: 50 req/min - Normal UX for data retrieval
+	profileRateLimiter := rate_limiter.NewRateLimiter(redisClient, 50, time.Minute)
 
 	return &Services{
 		GoogleAuthService: googleAuthService,
@@ -49,7 +61,10 @@ func setupServices(
 		EmailService:      emailService,
 		OTPService:        otpService,
 		JWTService:        jwtService,
-		RateLimiter:       rateLimiter,
+		AuthRateLimiter:   authRateLimiter,
+		SearchRateLimiter: searchRateLimiter,
+		ProfileRateLimiter: profileRateLimiter,
+		RateLimiter:       profileRateLimiter, // Default to profile limiter for backward compatibility
 	}
 }
 

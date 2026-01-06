@@ -275,11 +275,12 @@ func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64
 
 // GetByAccountIDAndPartnerID retrieves all print jobs for a specific customer (account_id) AND shop (partner_id)
 // SECURITY: This ensures customers only see files they uploaded to a specific shop
+// Excludes completed files from the results
 func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, accountID int64, partnerID int64) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
-		 WHERE account_id = $1 AND partner_id = $2 AND partner_id IS NOT NULL
+		 WHERE account_id = $1 AND partner_id = $2 AND partner_id IS NOT NULL AND (status IS NULL OR status != 'completed')
 		 ORDER BY created_at DESC`,
 		accountID, partnerID,
 	)
