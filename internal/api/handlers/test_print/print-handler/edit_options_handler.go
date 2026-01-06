@@ -16,6 +16,7 @@ type EditPrintJobOptionsRequest struct {
 	NumCopies  *int    `json:"num_copies,omitempty"` // Optional: number of copies
 	StartPage  *int    `json:"start_page,omitempty"` // Optional: starting page (1-indexed)
 	EndPage    *int    `json:"end_page,omitempty"`   // Optional: ending page (1-indexed)
+	PageFilterType *string `json:"page_filter_type,omitempty"` // Optional: "all" (default), "odd", "even"
 }
 
 // EditPrintJobOptions handles requests from partners and customers to edit print job options
@@ -133,6 +134,17 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Validate page_filter_type if provided
+	if req.PageFilterType != nil {
+		switch *req.PageFilterType {
+		case "all", "odd", "even":
+		default:
+			log.Printf("WARNING: Invalid page_filter_type '%s'", *req.PageFilterType)
+			h.sendErrorResponse(w, http.StatusBadRequest, "Invalid page_filter_type", "Allowed values: all, odd, even")
+			return
+		}
+	}
+
 	// Update print job options
 	// Only update fields that are provided (non-nil)
 	// For customers, pass accountID for additional security check
@@ -140,7 +152,7 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 	if user.UserType == "customer" {
 		accountIDPtr = &accountID
 	}
-	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, req.StartPage, req.EndPage)
+	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, req.StartPage, req.EndPage, req.PageFilterType)
 	if err != nil {
 		log.Printf("ERROR: Failed to update print job options for '%s' - %v", req.Filename, err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to update print job options")
@@ -154,8 +166,8 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		// Still return success since update succeeded
 	}
 
-	log.Printf("SUCCESS: Print job options updated - User: %s (Type: %s), Filename: %s, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v",
-		user.ID, user.UserType, req.Filename, req.Color, req.NumCopies, req.StartPage, req.EndPage)
+	log.Printf("SUCCESS: Print job options updated - User: %s (Type: %s), Filename: %s, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v, PageFilterType: %v",
+		user.ID, user.UserType, req.Filename, req.Color, req.NumCopies, req.StartPage, req.EndPage, req.PageFilterType)
 
 	// Build response
 	response := map[string]interface{}{
@@ -170,12 +182,14 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		response["num_copies"] = updatedJob.NumCopies
 		response["start_page"] = updatedJob.StartPage
 		response["end_page"] = updatedJob.EndPage
+		response["page_filter_type"] = updatedJob.PageFilterType
 	} else {
 		// Fallback to request values if we couldn't retrieve updated job
 		response["color"] = req.Color
 		response["num_copies"] = req.NumCopies
 		response["start_page"] = req.StartPage
 		response["end_page"] = req.EndPage
+		response["page_filter_type"] = req.PageFilterType
 	}
 
 	h.sendJSONResponse(w, http.StatusOK, response)

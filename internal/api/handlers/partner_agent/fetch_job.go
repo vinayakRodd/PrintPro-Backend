@@ -73,6 +73,7 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	var numCopiesValue int = 1   // Default to 1 copy
 	var startPageValue *int = nil // Default to nil (print all pages from start)
 	var endPageValue *int = nil   // Default to nil (print all pages to end)
+	var pageFilterTypeValue *string = nil // Default to nil (agent will treat as "all")
 	
 	if h.printJobRepo != nil {
 		printJob, err := h.printJobRepo.GetByFilename(ctx, fileName)
@@ -92,8 +93,11 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 			if printJob.EndPage != nil {
 				endPageValue = printJob.EndPage
 			}
-			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v", 
-				fileName, colorValue, numCopiesValue, startPageValue, endPageValue)
+			if printJob.PageFilterType != nil {
+				pageFilterTypeValue = printJob.PageFilterType
+			}
+			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v, PageFilterType: %v", 
+				fileName, colorValue, numCopiesValue, startPageValue, endPageValue, pageFilterTypeValue)
 		}
 	} else {
 		log.Printf("WARNING: PrintJobRepository not available, using defaults (color=false, copies=1, all pages)")
@@ -114,6 +118,9 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if endPageValue != nil {
 		w.Header().Set("X-Print-End-Page", fmt.Sprintf("%d", *endPageValue))
+	}
+	if pageFilterTypeValue != nil {
+		w.Header().Set("X-Print-Page-Filter", fmt.Sprintf("%s", *pageFilterTypeValue))
 	}
 	
 	// Set content type based on file extension

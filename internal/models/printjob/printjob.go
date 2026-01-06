@@ -14,7 +14,8 @@ type PrintJob struct {
 	Color     *bool     `db:"color" json:"color,omitempty"`              // Nullable - color printing (default: false)
 	NumCopies *int      `db:"num_copies" json:"num_copies,omitempty"`    // Nullable - number of copies (default: 1)
 	StartPage *int      `db:"start_page" json:"start_page,omitempty"`    // Nullable - starting page number (1-indexed, NULL = from first page)
-	EndPage   *int      `db:"end_page" json:"end_page,omitempty"`          // Nullable - ending page number (1-indexed, NULL = to last page)
+	EndPage   *int      `db:"end_page" json:"end_page,omitempty"`        // Nullable - ending page number (1-indexed, NULL = to last page)
+	PageFilterType *string `db:"page_filter_type" json:"page_filter_type,omitempty"` // Optional page filter: "all" (default), "odd", "even"
 	Status    *string   `db:"status" json:"status,omitempty"`            // Nullable - pending, processing, completed, failed, cancelled
 	TotalCost *string   `db:"total_cost" json:"total_cost,omitempty"`    // Nullable (calculated later) - PostgreSQL numeric type
 	CreatedAt *time.Time `db:"created_at" json:"created_at,omitempty"`   // Nullable
