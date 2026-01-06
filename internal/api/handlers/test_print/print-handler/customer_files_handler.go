@@ -104,15 +104,18 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 			log.Printf("DEBUG: File '%s' not found in ready folder (may be archived)", job.Filename)
 			// Still include it in the list but mark as not available
 			fileList = append(fileList, map[string]interface{}{
-				"id":          job.ID,
-				"filename":    job.Filename,
-				"status":      getStatus(job.Status, processingQueueMap[job.Filename], readyQueueMap[job.Filename]),
-				"available":   false,
-				"preview_url": fmt.Sprintf("/api/test-print/preview?filename=%s", job.Filename),
-				"color":       job.Color,
-				"num_copies":  job.NumCopies,
-				"p_type":      job.PType,
-				"created_at":  job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+				"id":              job.ID,
+				"filename":        job.Filename,
+				"status":          getStatus(job.Status, processingQueueMap[job.Filename], readyQueueMap[job.Filename]),
+				"available":      false,
+				"preview_url":     fmt.Sprintf("/api/test-print/preview?filename=%s", job.Filename),
+				"color":           job.Color,
+				"num_copies":      job.NumCopies,
+				"p_type":          job.PType,
+				"start_page":      job.StartPage,
+				"end_page":        job.EndPage,
+				"page_filter_type": job.PageFilterType,
+				"created_at":      job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			})
 			continue
 		}
@@ -121,17 +124,20 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 		status := getStatus(job.Status, processingQueueMap[job.Filename], readyQueueMap[job.Filename])
 
 		fileList = append(fileList, map[string]interface{}{
-			"id":          job.ID,
-			"filename":    job.Filename,
-			"size":        fileInfo.Size(),
-			"modified_at": fileInfo.ModTime().Format("2006-01-02T15:04:05Z07:00"),
-			"status":      status,
-			"available":   true,
-			"preview_url": fmt.Sprintf("/api/test-print/preview?filename=%s", job.Filename),
-			"color":       job.Color,
-			"num_copies":  job.NumCopies,
-			"p_type":      job.PType,
-			"created_at":  job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			"id":               job.ID,
+			"filename":         job.Filename,
+			"size":             fileInfo.Size(),
+			"modified_at":       fileInfo.ModTime().Format("2006-01-02T15:04:05Z07:00"),
+			"status":           status,
+			"available":        true,
+			"preview_url":       fmt.Sprintf("/api/test-print/preview?filename=%s", job.Filename),
+			"color":            job.Color,
+			"num_copies":       job.NumCopies,
+			"p_type":           job.PType,
+			"start_page":       job.StartPage,
+			"end_page":         job.EndPage,
+			"page_filter_type": job.PageFilterType,
+			"created_at":       job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 

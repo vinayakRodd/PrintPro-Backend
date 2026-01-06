@@ -148,6 +148,18 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Parse page_filter_type (optional): all | odd | even
+	pageFilterTypeStr := strings.TrimSpace(strings.ToLower(r.FormValue("page_filter_type")))
+	var pageFilterTypePtr *string
+	if pageFilterTypeStr != "" {
+		switch pageFilterTypeStr {
+		case "all", "odd", "even":
+			pageFilterTypePtr = &pageFilterTypeStr
+		default:
+			log.Printf("WARNING: Invalid page_filter_type value '%s', using default (all)", pageFilterTypeStr)
+		}
+	}
+
 	// Validate page range if both are provided
 	if startPagePtr != nil && endPagePtr != nil {
 		if *startPagePtr > *endPagePtr {
@@ -157,8 +169,8 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("DEBUG: Upload request - Shop: %s, Customer: %s, PType: %v, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v", 
-		shopName, user.ID, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr)
+	log.Printf("DEBUG: Upload request - Shop: %s, Customer: %s, PType: %v, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v, PageFilterType: %v", 
+		shopName, user.ID, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr)
 
 	// Get file from form
 	file, header, err := r.FormFile("file")
@@ -284,7 +296,7 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			accountIDPtr = &accountID
 		}
 		
-		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr)
+		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr)
 		if err != nil {
 			log.Printf("ERROR: Failed to create print job in database - %v", err)
 			// Don't fail the upload, but log the error
