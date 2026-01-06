@@ -77,7 +77,9 @@ func (a *Application) RegisterRoutes() {
 	routes.RegisterRoutes(
 		a.authHandler,
 		printerHandler,
-		a.services.RateLimiter,
+		a.services.AuthRateLimiter,    // 5 req/min for auth endpoints
+		a.services.SearchRateLimiter,  // 20 req/min for search endpoints
+		a.services.ProfileRateLimiter, // 200 req/min for profile/data endpoints
 		a.authMiddlewareFunc,
 		cors.CORS,
 		a.redisClient,
@@ -121,17 +123,19 @@ func (a *Application) RegisterRoutes() {
 	)
 
 	// Register test print routes
-	http.HandleFunc("/api/test-print/upload", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(uploadHandler.UploadFile))))
-	http.HandleFunc("/api/test-print/list", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListFiles)))) // Partner: list all files
-	http.HandleFunc("/api/test-print/my-files", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListCustomerFiles)))) // Customer: list their own files
-	http.HandleFunc("/api/test-print/delete", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.DeleteFile)))) // Customer: delete their own files
-	http.HandleFunc("/api/test-print/printers", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListPrinters))))
-	http.HandleFunc("/api/test-print/print", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PrintFile))))
-	http.HandleFunc("/api/test-print/queue", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.QueueFile))))
-	http.HandleFunc("/api/test-print/preview", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PreviewPDF))))
-	http.HandleFunc("/api/test-print/edit-options", cors.CORS(a.services.RateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.EditPrintJobOptions))))
+	// Profile/Data endpoints: 200 req/min - Normal UX for data operations
+	http.HandleFunc("/api/test-print/upload", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(uploadHandler.UploadFile))))
+	http.HandleFunc("/api/test-print/list", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListFiles)))) // Partner: list all files
+	http.HandleFunc("/api/test-print/my-files", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListCustomerFiles)))) // Customer: list their own files
+	http.HandleFunc("/api/test-print/delete", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.DeleteFile)))) // Customer: delete their own files
+	http.HandleFunc("/api/test-print/printers", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListPrinters))))
+	http.HandleFunc("/api/test-print/print", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PrintFile))))
+	http.HandleFunc("/api/test-print/queue", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.QueueFile))))
+	http.HandleFunc("/api/test-print/preview", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PreviewPDF))))
+	http.HandleFunc("/api/test-print/edit-options", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.EditPrintJobOptions))))
 
 	// Register partner agent routes (no auth required - agent will authenticate separately)
+	// No rate limiting for agent endpoints (internal communication)
 	http.HandleFunc("/api/partner-agent/fetch-job", cors.CORS(agentHandler.FetchJob))
 	http.HandleFunc("/api/partner-agent/confirm-print", cors.CORS(agentHandler.ConfirmPrint))
 	http.HandleFunc("/api/partner-agent/confirm", cors.CORS(agentHandler.ConfirmPrint)) // Keep for backward compatibility
@@ -141,8 +145,8 @@ func (a *Application) RegisterRoutes() {
 	// Initialize shop handler
 	shopHandler := shop_handler.NewShopHandler(a.repositories.PartnerProfileRepository)
 
-	// Register shop routes (optional auth - can be public or authenticated)
-	http.HandleFunc("/api/shops/names", cors.CORS(a.services.RateLimiter.LimitMiddleware(shopHandler.GetShopNames)))
+	// Register shop routes - Search endpoint: 20 req/min (DB heavy query)
+	http.HandleFunc("/api/shops/names", cors.CORS(a.services.SearchRateLimiter.LimitMiddleware(shopHandler.GetShopNames)))
 
 	// Register WebSocket routes (hub already initialized above)
 	http.HandleFunc("/ws/", cors.CORS(wsHandler.HandleWebSocket))

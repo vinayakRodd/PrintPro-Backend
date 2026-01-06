@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 	"print-pro-backend/internal/infrastructure"
+	"print-pro-backend/internal/middleware/auth_middleware"
 )
 
 // RateLimiter handles rate limiting using Redis
@@ -25,13 +26,23 @@ func NewRateLimiter(redisClient *infrastructure.RedisClient, maxRequests int, wi
 }
 
 // LimitMiddleware returns a middleware function for rate limiting
+// For authenticated endpoints, it uses user ID; for public endpoints, it uses IP address
 func (rl *RateLimiter) LimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Get client identifier (IP address or user ID)
+		// Try to get user ID from context (for authenticated endpoints)
+		// This provides better rate limiting per user rather than per IP
 		clientID := rl.getClientID(r)
 		
-		// Create rate limit key
-		key := fmt.Sprintf("ratelimit:%s:%d", clientID, time.Now().Unix()/int64(rl.windowSize.Seconds()))
+		// If user is authenticated, use user ID instead of IP for more accurate rate limiting
+		if user, ok := auth_middleware.GetUserFromContext(r); ok {
+			// Use user ID + user type for authenticated users
+			// This prevents a single user from spamming uploads even if they change IPs
+			clientID = fmt.Sprintf("user:%s:%s", user.UserType, user.ID)
+		}
+		
+		// Create rate limit key with time window
+		windowIndex := time.Now().Unix() / int64(rl.windowSize.Seconds())
+		key := fmt.Sprintf("ratelimit:%s:%d", clientID, windowIndex)
 		
 		ctx := r.Context()
 		
@@ -39,6 +50,7 @@ func (rl *RateLimiter) LimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		count, err := rl.redisClient.Increment(ctx, key)
 		if err != nil {
 			// If Redis fails, allow the request (fail open)
+			// In production, you might want to log this and consider fail-closed for critical endpoints
 			next(w, r)
 			return
 		}

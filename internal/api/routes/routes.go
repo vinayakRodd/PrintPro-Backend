@@ -12,7 +12,9 @@ import (
 func RegisterRoutes(
 	authHandler *auth_handler.AuthHandler,
 	printerHandler *printer_handler.PrinterHandler,
-	rateLimiter *rate_limiter.RateLimiter,
+	authRateLimiter *rate_limiter.RateLimiter,    // 5 req/min for auth endpoints
+	searchRateLimiter *rate_limiter.RateLimiter,  // 20 req/min for search endpoints
+	profileRateLimiter *rate_limiter.RateLimiter, // 200 req/min for profile/data endpoints
 	authMiddlewareFunc func(http.HandlerFunc) http.HandlerFunc,
 	corsHandler func(http.HandlerFunc) http.HandlerFunc,
 	redisClient *infrastructure.RedisClient,
@@ -25,13 +27,16 @@ func RegisterRoutes(
 	http.HandleFunc("/ping", corsHandler(createHealthCheck(redisClient, postgresClient)))
 
 	// Printer sync route from agent (public endpoint - agent doesn't have auth token)
-	http.HandleFunc("/api/update-printers", corsHandler(rateLimiter.LimitMiddleware(printerHandler.UpdatePrintersHandler)))
+	// Using profile rate limiter (200/min) - normal data operation
+	http.HandleFunc("/api/update-printers", corsHandler(profileRateLimiter.LimitMiddleware(printerHandler.UpdatePrintersHandler)))
 	
 	// Printer retrieval route (protected - requires partner authentication)
-	http.HandleFunc("/api/printers", corsHandler(rateLimiter.LimitMiddleware(authMiddlewareFunc(printerHandler.GetPrintersHandler))))
+	// Using profile rate limiter (200/min) - normal data operation
+	http.HandleFunc("/api/printers", corsHandler(profileRateLimiter.LimitMiddleware(authMiddlewareFunc(printerHandler.GetPrintersHandler))))
 	
-	// Register auth routes
-	RegisterAuthRoutes(authHandler, rateLimiter, authMiddlewareFunc, corsHandler)
+	// Register auth routes with appropriate rate limiters
+	// Auth endpoints (login/signup): 5 req/min, Profile endpoints (/me, /user-type): 200 req/min
+	RegisterAuthRoutes(authHandler, authRateLimiter, profileRateLimiter, authMiddlewareFunc, corsHandler)
 
 	// Root handler should be last (catches all unmatched routes)
 	http.HandleFunc("/", corsHandler(handler))
