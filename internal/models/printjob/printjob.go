@@ -17,6 +17,8 @@ type PrintJob struct {
 	EndPage   *int      `db:"end_page" json:"end_page,omitempty"`        // Nullable - ending page number (1-indexed, NULL = to last page)
 	PageFilterType *string `db:"page_filter_type" json:"page_filter_type,omitempty"` // Optional page filter: "all" (default), "odd", "even"
 	IndividualColorPrintPages []int `db:"individual_color_print_pages" json:"individual_color_print_pages,omitempty"` // Array of page numbers (1-indexed) to print in color
+	SkipPages []int `db:"skip_pages" json:"skip_pages,omitempty"` // Array of page numbers (1-indexed) to skip during printing
+	BackToBack *bool `db:"back_to_back" json:"back_to_back,omitempty"` // Nullable - true for duplex printing (both sides), false for simplex (one side)
 	Status    *string   `db:"status" json:"status,omitempty"`            // Nullable - pending, processing, completed, failed, cancelled
 	TotalCost *string   `db:"total_cost" json:"total_cost,omitempty"`    // Nullable (calculated later) - PostgreSQL numeric type
 	CreatedAt *time.Time `db:"created_at" json:"created_at,omitempty"`   // Nullable

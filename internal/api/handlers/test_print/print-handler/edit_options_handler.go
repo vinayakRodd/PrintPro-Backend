@@ -18,6 +18,8 @@ type EditPrintJobOptionsRequest struct {
 	EndPage    *int    `json:"end_page,omitempty"`   // Optional: ending page (1-indexed)
 	PageFilterType *string `json:"page_filter_type,omitempty"` // Optional: "all" (default), "odd", "even"
 	IndividualColorPrintPages []int `json:"individual_color_print_pages,omitempty"` // Optional: Array of page numbers (1-indexed) to print in color
+	SkipPages []int `json:"skip_pages,omitempty"` // Optional: Array of page numbers (1-indexed) to skip during printing
+	BackToBack *bool `json:"back_to_back,omitempty"` // Optional: true for duplex printing (both sides), false for simplex (one side)
 }
 
 // EditPrintJobOptions handles requests from partners and customers to edit print job options
@@ -146,6 +148,17 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Validate skip_pages if provided
+	if req.SkipPages != nil {
+		for _, pageNum := range req.SkipPages {
+			if pageNum < 1 {
+				log.Printf("WARNING: Invalid skip_pages - page numbers must be >= 1, found: %d", pageNum)
+				h.sendErrorResponse(w, http.StatusBadRequest, "Invalid skip_pages", "Page numbers in skip_pages must be greater than 0")
+				return
+			}
+		}
+	}
+
 	// Update print job options
 	// Only update fields that are provided (non-nil)
 	// For customers, pass accountID for additional security check
@@ -166,7 +179,19 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 	}
 	// If req.IndividualColorPrintPages is nil, individualColorPagesPtr stays nil (don't update)
 	
-	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, req.StartPage, req.EndPage, req.PageFilterType, individualColorPagesPtr)
+	// Handle skip_pages: if provided, update it
+	// Empty array [] means clear skip pages (set to NULL, no pages to skip)
+	// nil means don't update (keep existing value)
+	var skipPagesPtr *[]int
+	if req.SkipPages != nil {
+		// Field was provided in request (could be empty or non-empty)
+		// Always set the pointer so repository knows to update
+		// Empty slice will be handled in repository to set NULL
+		skipPagesPtr = &req.SkipPages
+	}
+	// If req.SkipPages is nil, skipPagesPtr stays nil (don't update)
+	
+	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, req.StartPage, req.EndPage, req.PageFilterType, individualColorPagesPtr, skipPagesPtr, req.BackToBack)
 	if err != nil {
 		log.Printf("ERROR: Failed to update print job options for '%s' - %v", req.Filename, err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to update print job options")
@@ -180,8 +205,8 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		// Still return success since update succeeded
 	}
 
-	log.Printf("SUCCESS: Print job options updated - User: %s (Type: %s), Filename: %s, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v",
-		user.ID, user.UserType, req.Filename, req.Color, req.NumCopies, req.StartPage, req.EndPage, req.PageFilterType, req.IndividualColorPrintPages)
+	log.Printf("SUCCESS: Print job options updated - User: %s (Type: %s), Filename: %s, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v, SkipPages: %v, BackToBack: %v",
+		user.ID, user.UserType, req.Filename, req.Color, req.NumCopies, req.StartPage, req.EndPage, req.PageFilterType, req.IndividualColorPrintPages, req.SkipPages, req.BackToBack)
 
 	// Build response
 	response := map[string]interface{}{
@@ -198,6 +223,8 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		response["end_page"] = updatedJob.EndPage
 		response["page_filter_type"] = updatedJob.PageFilterType
 		response["individual_color_print_pages"] = updatedJob.IndividualColorPrintPages
+		response["skip_pages"] = updatedJob.SkipPages
+		response["back_to_back"] = updatedJob.BackToBack
 	} else {
 		// Fallback to request values if we couldn't retrieve updated job
 		response["color"] = req.Color
@@ -206,6 +233,8 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		response["end_page"] = req.EndPage
 		response["page_filter_type"] = req.PageFilterType
 		response["individual_color_print_pages"] = req.IndividualColorPrintPages
+		response["skip_pages"] = req.SkipPages
+		response["back_to_back"] = req.BackToBack
 	}
 
 	h.sendJSONResponse(w, http.StatusOK, response)
