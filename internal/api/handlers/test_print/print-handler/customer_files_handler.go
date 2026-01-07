@@ -116,6 +116,8 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 				"end_page":                  job.EndPage,
 				"page_filter_type":          job.PageFilterType,
 				"individual_color_print_pages": job.IndividualColorPrintPages,
+				"skip_pages":                job.SkipPages,
+				"back_to_back":              job.BackToBack,
 				"created_at":                job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			})
 			continue
@@ -139,6 +141,8 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 			"end_page":                    job.EndPage,
 			"page_filter_type":            job.PageFilterType,
 			"individual_color_print_pages": job.IndividualColorPrintPages,
+			"skip_pages":                  job.SkipPages,
+			"back_to_back":                job.BackToBack,
 			"created_at":                  job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}

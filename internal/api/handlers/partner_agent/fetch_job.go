@@ -76,6 +76,8 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	var endPageValue *int = nil   // Default to nil (print all pages to end)
 	var pageFilterTypeValue *string = nil // Default to nil (agent will treat as "all")
 	var individualColorPagesValue []int = nil // Default to nil (use global color setting)
+	var skipPagesValue []int = nil // Default to nil (no pages to skip)
+	var backToBackValue bool = false // Default to simplex (one side)
 	
 	if h.printJobRepo != nil {
 		printJob, err := h.printJobRepo.GetByFilename(ctx, fileName)
@@ -101,8 +103,14 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 			if printJob.IndividualColorPrintPages != nil && len(printJob.IndividualColorPrintPages) > 0 {
 				individualColorPagesValue = printJob.IndividualColorPrintPages
 			}
-			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v", 
-				fileName, colorValue, numCopiesValue, startPageValue, endPageValue, pageFilterTypeValue, individualColorPagesValue)
+			if printJob.SkipPages != nil && len(printJob.SkipPages) > 0 {
+				skipPagesValue = printJob.SkipPages
+			}
+			if printJob.BackToBack != nil {
+				backToBackValue = *printJob.BackToBack
+			}
+			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v, SkipPages: %v, BackToBack: %v", 
+				fileName, colorValue, numCopiesValue, startPageValue, endPageValue, pageFilterTypeValue, individualColorPagesValue, skipPagesValue, backToBackValue)
 		}
 	} else {
 		log.Printf("WARNING: PrintJobRepository not available, using defaults (color=false, copies=1, all pages)")
@@ -134,6 +142,15 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Print-Individual-Color-Pages", string(individualColorPagesJSON))
 		}
 	}
+	if skipPagesValue != nil && len(skipPagesValue) > 0 {
+		// Convert array to JSON string for header
+		skipPagesJSON, err := json.Marshal(skipPagesValue)
+		if err == nil {
+			w.Header().Set("X-Print-Skip-Pages", string(skipPagesJSON))
+		}
+	}
+	// Send back_to_back parameter
+	w.Header().Set("X-Print-Back-To-Back", fmt.Sprintf("%v", backToBackValue))
 	
 	// Set content type based on file extension
 	ext := strings.ToLower(filepath.Ext(fileName))

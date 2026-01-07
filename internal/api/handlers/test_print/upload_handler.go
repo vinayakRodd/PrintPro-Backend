@@ -174,6 +174,41 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Parse skip_pages (optional): JSON array of page numbers (1-indexed) to skip
+	// Example: "[2, 5, 8]" means pages 2, 5, and 8 will be skipped during printing
+	skipPagesStr := strings.TrimSpace(r.FormValue("skip_pages"))
+	var skipPages []int
+	if skipPagesStr != "" {
+		if err := json.Unmarshal([]byte(skipPagesStr), &skipPages); err != nil {
+			log.Printf("WARNING: Invalid skip_pages JSON '%s' - %v, ignoring", skipPagesStr, err)
+			skipPages = nil
+		} else if len(skipPages) == 0 {
+			// Empty array is treated as nil (no pages to skip)
+			skipPages = nil
+		} else {
+			// Validate page numbers are positive
+			validPages := true
+			for _, p := range skipPages {
+				if p < 1 {
+					validPages = false
+					break
+				}
+			}
+			if !validPages {
+				log.Printf("WARNING: Invalid skip_pages - page numbers must be >= 1, ignoring")
+				skipPages = nil
+			}
+		}
+	}
+
+	// Parse back_to_back (optional): boolean for duplex printing
+	backToBackStr := strings.TrimSpace(strings.ToLower(r.FormValue("back_to_back")))
+	var backToBackPtr *bool
+	if backToBackStr != "" {
+		backToBack := backToBackStr == "true" || backToBackStr == "1" || backToBackStr == "yes"
+		backToBackPtr = &backToBack
+	}
+
 	// Validate page range if both are provided
 	if startPagePtr != nil && endPagePtr != nil {
 		if *startPagePtr > *endPagePtr {
@@ -183,8 +218,8 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("DEBUG: Upload request - Shop: %s, Customer: %s, PType: %v, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v", 
-		shopName, user.ID, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages)
+	log.Printf("DEBUG: Upload request - Shop: %s, Customer: %s, PType: %v, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v, SkipPages: %v, BackToBack: %v", 
+		shopName, user.ID, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages, skipPages, backToBackPtr)
 
 	// Get file from form
 	file, header, err := r.FormFile("file")
@@ -310,7 +345,7 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			accountIDPtr = &accountID
 		}
 		
-		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages)
+		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages, skipPages, backToBackPtr)
 		if err != nil {
 			log.Printf("ERROR: Failed to create print job in database - %v", err)
 			// Don't fail the upload, but log the error
