@@ -16,6 +16,7 @@ type EditPrintJobOptionsRequest struct {
 	Color      *bool   `json:"color,omitempty"`      // Optional: true for color, false for B&W
 	NumCopies  *int    `json:"num_copies,omitempty"` // Optional: number of copies
 	BackToBack *bool `json:"back_to_back,omitempty"` // Optional: true for duplex printing (both sides), false for simplex (one side)
+	DeleteAfterPrint *bool `json:"delete_after_print,omitempty"` // Optional: if true, file will be hidden from partner listings after printing is completed
 	PageOptions *printjob.PageOptions `json:"page_options,omitempty"` // Optional: Consolidated page options structure
 }
 
@@ -111,6 +112,12 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 
 		// Use the file's partner_id for the update (customer's file belongs to a specific shop)
 		partnerID = printJob.PartnerID
+		
+		// SECURITY: Customers cannot set delete_after_print - only partners can control this
+		if req.DeleteAfterPrint != nil {
+			log.Printf("WARNING: Customer %d attempted to set delete_after_print - ignoring this field", accountID)
+			req.DeleteAfterPrint = nil // Ignore customer's attempt to set this
+		}
 	}
 
 	// Validate num_copies if provided
@@ -197,7 +204,7 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	
-	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPagesPtr, skipPagesPtr, req.BackToBack)
+	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPagesPtr, skipPagesPtr, req.BackToBack, req.DeleteAfterPrint)
 	if err != nil {
 		log.Printf("ERROR: Failed to update print job options for '%s' - %v", req.Filename, err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to update print job options")
@@ -211,8 +218,8 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		// Still return success since update succeeded
 	}
 
-	log.Printf("SUCCESS: Print job options updated - User: %s (Type: %s), Filename: %s, Color: %v, NumCopies: %v, PageOptions: %+v, BackToBack: %v",
-		user.ID, user.UserType, req.Filename, req.Color, req.NumCopies, req.PageOptions, req.BackToBack)
+	log.Printf("SUCCESS: Print job options updated - User: %s (Type: %s), Filename: %s, Color: %v, NumCopies: %v, PageOptions: %+v, BackToBack: %v, DeleteAfterPrint: %v",
+		user.ID, user.UserType, req.Filename, req.Color, req.NumCopies, req.PageOptions, req.BackToBack, req.DeleteAfterPrint)
 
 	// Build response
 	response := map[string]interface{}{
@@ -227,11 +234,13 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		response["num_copies"] = updatedJob.NumCopies
 		response["page_options"] = updatedJob.PageOptions
 		response["back_to_back"] = updatedJob.BackToBack
+		response["delete_after_print"] = updatedJob.DeleteAfterPrint
 	} else {
 		// Fallback to request values if we couldn't retrieve updated job
 		response["color"] = req.Color
 		response["num_copies"] = req.NumCopies
 		response["back_to_back"] = req.BackToBack
+		response["delete_after_print"] = req.DeleteAfterPrint
 		if req.PageOptions != nil {
 			response["page_options"] = req.PageOptions
 		}

@@ -27,6 +27,7 @@ type PrintJob struct {
 	NumCopies *int      `db:"num_copies" json:"num_copies,omitempty"`    // Nullable - number of copies (default: 1)
 	PageOptions PageOptions `db:"page_options" json:"page_options,omitempty"` // Consolidated page selection options (JSONB)
 	BackToBack *bool `db:"back_to_back" json:"back_to_back,omitempty"` // Nullable - true for duplex printing (both sides), false for simplex (one side)
+	DeleteAfterPrint *bool `db:"delete_after_print" json:"delete_after_print,omitempty"` // Nullable - if true, file will be hidden from partner listings after printing is completed
 	Status    *string   `db:"status" json:"status,omitempty"`            // Nullable - pending, processing, completed, failed, cancelled
 	TotalCost *string   `db:"total_cost" json:"total_cost,omitempty"`    // Nullable (calculated later) - PostgreSQL numeric type
 	CreatedAt *time.Time `db:"created_at" json:"created_at,omitempty"`   // Nullable
