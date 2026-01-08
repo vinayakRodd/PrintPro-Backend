@@ -108,9 +108,6 @@ func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partn
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse page_options: %w", err)
 	}
-	
-	// Populate legacy fields for backward compatibility
-	job.PopulateLegacyFields()
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create print job: %w", err)
@@ -195,9 +192,6 @@ func (r *PrintJobRepository) GetByFilename(ctx context.Context, filename string)
 		return nil, fmt.Errorf("failed to parse page_options: %w", err)
 	}
 	
-	// Populate legacy fields for backward compatibility
-	job.PopulateLegacyFields()
-	
 	return &job, nil
 }
 
@@ -253,9 +247,6 @@ func (r *PrintJobRepository) scanPrintJobRow(rows interface {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse page_options: %w", err)
 	}
-	
-	// Populate legacy fields for backward compatibility
-	job.PopulateLegacyFields()
 
 	return &job, nil
 }

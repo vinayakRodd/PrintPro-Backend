@@ -32,23 +32,6 @@ type PrintJob struct {
 	TotalCost *string   `db:"total_cost" json:"total_cost,omitempty"`    // Nullable (calculated later) - PostgreSQL numeric type
 	CreatedAt *time.Time `db:"created_at" json:"created_at,omitempty"`   // Nullable
 	UpdatedAt *time.Time `db:"updated_at" json:"updated_at,omitempty"`  // Nullable
-	
-	// Legacy fields - kept for backward compatibility during migration
-	// These are populated from PageOptions for API responses
-	StartPage *int `json:"start_page,omitempty"` // Deprecated: use page_options.start_page
-	EndPage   *int `json:"end_page,omitempty"`   // Deprecated: use page_options.end_page
-	PageFilterType *string `json:"page_filter_type,omitempty"` // Deprecated: use page_options.filter_type
-	IndividualColorPrintPages []int `json:"individual_color_print_pages,omitempty"` // Deprecated: use page_options.color_pages
-	SkipPages []int `json:"skip_pages,omitempty"` // Deprecated: use page_options.skip_pages
-}
-
-// PopulateLegacyFields populates legacy fields from PageOptions for backward compatibility
-func (pj *PrintJob) PopulateLegacyFields() {
-	pj.StartPage = pj.PageOptions.StartPage
-	pj.EndPage = pj.PageOptions.EndPage
-	pj.PageFilterType = pj.PageOptions.FilterType
-	pj.IndividualColorPrintPages = pj.PageOptions.ColorPages
-	pj.SkipPages = pj.PageOptions.SkipPages
 }
 
 // ScanPageOptions scans JSONB into PageOptions struct

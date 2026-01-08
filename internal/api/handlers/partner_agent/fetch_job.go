@@ -91,20 +91,21 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 			if printJob.NumCopies != nil {
 				numCopiesValue = *printJob.NumCopies
 			}
-			if printJob.StartPage != nil {
-				startPageValue = printJob.StartPage
+			// Extract page options from PageOptions structure
+			if printJob.PageOptions.StartPage != nil {
+				startPageValue = printJob.PageOptions.StartPage
 			}
-			if printJob.EndPage != nil {
-				endPageValue = printJob.EndPage
+			if printJob.PageOptions.EndPage != nil {
+				endPageValue = printJob.PageOptions.EndPage
 			}
-			if printJob.PageFilterType != nil {
-				pageFilterTypeValue = printJob.PageFilterType
+			if printJob.PageOptions.FilterType != nil {
+				pageFilterTypeValue = printJob.PageOptions.FilterType
 			}
-			if printJob.IndividualColorPrintPages != nil && len(printJob.IndividualColorPrintPages) > 0 {
-				individualColorPagesValue = printJob.IndividualColorPrintPages
+			if printJob.PageOptions.ColorPages != nil && len(printJob.PageOptions.ColorPages) > 0 {
+				individualColorPagesValue = printJob.PageOptions.ColorPages
 			}
-			if printJob.SkipPages != nil && len(printJob.SkipPages) > 0 {
-				skipPagesValue = printJob.SkipPages
+			if printJob.PageOptions.SkipPages != nil && len(printJob.PageOptions.SkipPages) > 0 {
+				skipPagesValue = printJob.PageOptions.SkipPages
 			}
 			if printJob.BackToBack != nil {
 				backToBackValue = *printJob.BackToBack
