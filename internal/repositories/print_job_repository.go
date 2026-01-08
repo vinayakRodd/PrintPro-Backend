@@ -40,47 +40,39 @@ func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partn
 		numCopiesValue = 1 // Default to 1 copy
 	}
 
-	// page_filter_type: default to "all" unless a valid value is provided
-	pageFilter := "all"
+	// Build page_options JSONB from individual parameters
+	pageOpts := printjob.PageOptions{
+		StartPage:  startPage,
+		EndPage:    endPage,
+		SkipPages:  skipPages,
+		ColorPages: individualColorPages,
+	}
+	
+	// Set filter_type with default
 	if pageFilterType != nil {
 		switch *pageFilterType {
 		case "all", "odd", "even":
-			pageFilter = *pageFilterType
-		}
-	}
-
-	// Convert individualColorPages slice to JSONB for PostgreSQL
-	var individualColorPagesJSON []byte
-	if individualColorPages != nil && len(individualColorPages) > 0 {
-		var err error
-		individualColorPagesJSON, err = json.Marshal(individualColorPages)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal individual_color_print_pages: %w", err)
+			pageOpts.FilterType = pageFilterType
+		default:
+			defaultFilter := "all"
+			pageOpts.FilterType = &defaultFilter
 		}
 	} else {
-		individualColorPagesJSON = nil // NULL in database
+		defaultFilter := "all"
+		pageOpts.FilterType = &defaultFilter
 	}
-
-	var individualColorPagesJSONB interface{}
-	if individualColorPagesJSON != nil {
-		individualColorPagesJSONB = string(individualColorPagesJSON)
+	
+	// Marshal page_options to JSONB
+	pageOptsJSON, err := json.Marshal(pageOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal page_options: %w", err)
 	}
-
-	// Convert skipPages slice to JSONB for PostgreSQL
-	var skipPagesJSON []byte
-	if skipPages != nil && len(skipPages) > 0 {
-		var err error
-		skipPagesJSON, err = json.Marshal(skipPages)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal skip_pages: %w", err)
-		}
+	
+	var pageOptsJSONB interface{}
+	if len(pageOptsJSON) > 0 && string(pageOptsJSON) != "{}" {
+		pageOptsJSONB = string(pageOptsJSON)
 	} else {
-		skipPagesJSON = nil // NULL in database
-	}
-
-	var skipPagesJSONB interface{}
-	if skipPagesJSON != nil {
-		skipPagesJSONB = string(skipPagesJSON)
+		pageOptsJSONB = "{}" // Empty object
 	}
 
 	// Set default for back_to_back if not provided
@@ -91,12 +83,26 @@ func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partn
 		backToBackValue = false // Default to simplex (one side)
 	}
 
-	err := r.db.QueryRow(ctx,
-		`INSERT INTO print_jobs (account_id, partner_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, skip_pages, back_to_back, status, created_at, updated_at) 
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) 
-		 RETURNING id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, skip_pages, back_to_back, status, total_cost, created_at, updated_at`,
-		accountID, partnerID, filename, fileURL, pType, colorValue, numCopiesValue, startPage, endPage, pageFilter, individualColorPagesJSONB, skipPagesJSONB, backToBackValue, status, now, now,
-	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType, &job.IndividualColorPrintPages, &job.SkipPages, &job.BackToBack, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
+	var pageOptsJSONBScan interface{}
+	err = r.db.QueryRow(ctx,
+		`INSERT INTO print_jobs (account_id, partner_id, filename, file_url, p_type, color, num_copies, page_options, back_to_back, status, created_at, updated_at) 
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12) 
+		 RETURNING id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, page_options, back_to_back, status, total_cost, created_at, updated_at`,
+		accountID, partnerID, filename, fileURL, pType, colorValue, numCopiesValue, pageOptsJSONB, backToBackValue, status, now, now,
+	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &pageOptsJSONBScan, &job.BackToBack, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
+	
+	if err != nil {
+		return nil, fmt.Errorf("failed to create print job: %w", err)
+	}
+	
+	// Parse page_options from database
+	job.PageOptions, err = printjob.ScanPageOptions(pageOptsJSONBScan)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse page_options: %w", err)
+	}
+	
+	// Populate legacy fields for backward compatibility
+	job.PopulateLegacyFields()
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create print job: %w", err)
@@ -160,32 +166,29 @@ func scanJSONBArray(src interface{}) ([]int, error) {
 // GetByFilename retrieves a print job by filename
 func (r *PrintJobRepository) GetByFilename(ctx context.Context, filename string) (*printjob.PrintJob, error) {
 	var job printjob.PrintJob
-	var individualColorPagesJSON interface{}
+	var pageOptsJSON interface{}
 	
-	var skipPagesJSON interface{}
 	err := r.db.QueryRow(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, skip_pages, back_to_back, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, page_options, back_to_back, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE filename = $1
 		 ORDER BY created_at DESC
 		 LIMIT 1`,
 		filename,
-	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType, &individualColorPagesJSON, &skipPagesJSON, &job.BackToBack, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
+	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &pageOptsJSON, &job.BackToBack, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get print job by filename: %w", err)
 	}
 	
-	// Parse JSONB arrays
-	job.IndividualColorPrintPages, err = scanJSONBArray(individualColorPagesJSON)
+	// Parse page_options JSONB
+	job.PageOptions, err = printjob.ScanPageOptions(pageOptsJSON)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse individual_color_print_pages: %w", err)
+		return nil, fmt.Errorf("failed to parse page_options: %w", err)
 	}
 	
-	job.SkipPages, err = scanJSONBArray(skipPagesJSON)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse skip_pages: %w", err)
-	}
+	// Populate legacy fields for backward compatibility
+	job.PopulateLegacyFields()
 	
 	return &job, nil
 }
@@ -227,28 +230,24 @@ func (r *PrintJobRepository) scanPrintJobRow(rows interface {
 	Scan(dest ...interface{}) error
 }) (*printjob.PrintJob, error) {
 	var job printjob.PrintJob
-	var individualColorPagesJSON interface{}
-	var skipPagesJSON interface{}
+	var pageOptsJSON interface{}
 	
 	err := rows.Scan(
 		&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL,
-		&job.PType, &job.Color, &job.NumCopies, &job.StartPage, &job.EndPage, &job.PageFilterType,
-		&individualColorPagesJSON, &skipPagesJSON, &job.BackToBack, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt,
+		&job.PType, &job.Color, &job.NumCopies, &pageOptsJSON, &job.BackToBack, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	
-	// Parse JSONB arrays
-	job.IndividualColorPrintPages, err = scanJSONBArray(individualColorPagesJSON)
+	// Parse page_options JSONB
+	job.PageOptions, err = printjob.ScanPageOptions(pageOptsJSON)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse individual_color_print_pages: %w", err)
+		return nil, fmt.Errorf("failed to parse page_options: %w", err)
 	}
 	
-	job.SkipPages, err = scanJSONBArray(skipPagesJSON)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse skip_pages: %w", err)
-	}
+	// Populate legacy fields for backward compatibility
+	job.PopulateLegacyFields()
 
 	return &job, nil
 }
@@ -259,7 +258,7 @@ func (r *PrintJobRepository) scanPrintJobRow(rows interface {
 func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64) ([]printjob.PrintJob, error) {
 	// SECURITY: Use strict WHERE clause with explicit type checking
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, skip_pages, back_to_back, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, page_options, back_to_back, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE partner_id = $1::bigint AND partner_id IS NOT NULL
 		 ORDER BY created_at DESC`,
@@ -332,69 +331,62 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 		argIndex++
 	}
 	
-	if startPage != nil {
-		updates = append(updates, fmt.Sprintf("start_page = $%d::integer", argIndex))
-		args = append(args, *startPage)
-		argIndex++
-	}
+	// Handle page_options update - merge with existing page_options
+	// We need to get existing page_options first, then merge with new values
+	pageOptsUpdated := false
+	var existingPageOpts printjob.PageOptions
 	
-	if endPage != nil {
-		updates = append(updates, fmt.Sprintf("end_page = $%d::integer", argIndex))
-		args = append(args, *endPage)
-		argIndex++
-	}
-
-	if pageFilterType != nil {
-		updates = append(updates, fmt.Sprintf("page_filter_type = $%d", argIndex))
-		args = append(args, *pageFilterType)
-		argIndex++
-	}
-
-	// Handle individual_color_print_pages update
-	// individualColorPages is a pointer:
-	// - nil pointer = field not provided, don't update
-	// - non-nil pointer with empty slice = clear (set to NULL)
-	// - non-nil pointer with values = set to those values
-	if individualColorPages != nil {
-		if len(*individualColorPages) == 0 {
-			// Empty array provided - clear it (set to NULL)
-			updates = append(updates, fmt.Sprintf("individual_color_print_pages = NULL"))
-			// No args needed for NULL
-		} else {
-			// Non-empty array provided - set to these values
-			individualColorPagesJSON, err := json.Marshal(*individualColorPages)
-			if err != nil {
-				return fmt.Errorf("failed to marshal individual_color_print_pages: %w", err)
+	// Check if any page-related fields are being updated
+	if startPage != nil || endPage != nil || pageFilterType != nil || individualColorPages != nil || skipPages != nil {
+		// Get existing print job to merge page_options
+		existingJob, err := r.GetByFilename(ctx, filename)
+		if err == nil {
+			existingPageOpts = existingJob.PageOptions
+		}
+		
+		// Build updated page_options by merging existing with new values
+		updatedPageOpts := existingPageOpts
+		
+		if startPage != nil {
+			updatedPageOpts.StartPage = startPage
+			pageOptsUpdated = true
+		}
+		if endPage != nil {
+			updatedPageOpts.EndPage = endPage
+			pageOptsUpdated = true
+		}
+		if pageFilterType != nil {
+			updatedPageOpts.FilterType = pageFilterType
+			pageOptsUpdated = true
+		}
+		if individualColorPages != nil {
+			if len(*individualColorPages) == 0 {
+				updatedPageOpts.ColorPages = nil // Clear
+			} else {
+				updatedPageOpts.ColorPages = *individualColorPages
 			}
-			updates = append(updates, fmt.Sprintf("individual_color_print_pages = $%d::jsonb", argIndex))
-			args = append(args, string(individualColorPagesJSON))
+			pageOptsUpdated = true
+		}
+		if skipPages != nil {
+			if len(*skipPages) == 0 {
+				updatedPageOpts.SkipPages = nil // Clear
+			} else {
+				updatedPageOpts.SkipPages = *skipPages
+			}
+			pageOptsUpdated = true
+		}
+		
+		if pageOptsUpdated {
+			// Marshal updated page_options to JSONB
+			pageOptsJSON, err := json.Marshal(updatedPageOpts)
+			if err != nil {
+				return fmt.Errorf("failed to marshal page_options: %w", err)
+			}
+			updates = append(updates, fmt.Sprintf("page_options = $%d::jsonb", argIndex))
+			args = append(args, string(pageOptsJSON))
 			argIndex++
 		}
 	}
-	// If individualColorPages is nil pointer, don't add to updates (don't change existing value)
-	
-	// Handle skip_pages update
-	// skipPages is a pointer:
-	// - nil pointer = field not provided, don't update
-	// - non-nil pointer with empty slice = clear (set to NULL)
-	// - non-nil pointer with values = set to those values
-	if skipPages != nil {
-		if len(*skipPages) == 0 {
-			// Empty array provided - clear it (set to NULL)
-			updates = append(updates, fmt.Sprintf("skip_pages = NULL"))
-			// No args needed for NULL
-		} else {
-			// Non-empty array provided - set to these values
-			skipPagesJSON, err := json.Marshal(*skipPages)
-			if err != nil {
-				return fmt.Errorf("failed to marshal skip_pages: %w", err)
-			}
-			updates = append(updates, fmt.Sprintf("skip_pages = $%d::jsonb", argIndex))
-			args = append(args, string(skipPagesJSON))
-			argIndex++
-		}
-	}
-	// If skipPages is nil pointer, don't add to updates (don't change existing value)
 	
 	// Handle back_to_back update
 	if backToBack != nil {
@@ -455,7 +447,7 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 // GetByAccountID retrieves all print jobs for a specific customer (account_id)
 func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, skip_pages, back_to_back, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, page_options, back_to_back, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE account_id = $1
 		 ORDER BY created_at DESC`,
@@ -487,7 +479,7 @@ func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64
 // Excludes completed files from the results
 func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, accountID int64, partnerID int64) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, start_page, end_page, page_filter_type, individual_color_print_pages, skip_pages, back_to_back, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, page_options, back_to_back, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE account_id = $1 AND partner_id = $2 AND partner_id IS NOT NULL AND (status IS NULL OR status != 'completed')
 		 ORDER BY created_at DESC`,

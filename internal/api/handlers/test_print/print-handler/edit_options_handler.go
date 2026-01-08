@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"print-pro-backend/internal/middleware/auth_middleware"
+	"print-pro-backend/internal/models/printjob"
 	"strconv"
 )
 
@@ -14,12 +15,8 @@ type EditPrintJobOptionsRequest struct {
 	Filename   string `json:"filename" binding:"required"`
 	Color      *bool   `json:"color,omitempty"`      // Optional: true for color, false for B&W
 	NumCopies  *int    `json:"num_copies,omitempty"` // Optional: number of copies
-	StartPage  *int    `json:"start_page,omitempty"` // Optional: starting page (1-indexed)
-	EndPage    *int    `json:"end_page,omitempty"`   // Optional: ending page (1-indexed)
-	PageFilterType *string `json:"page_filter_type,omitempty"` // Optional: "all" (default), "odd", "even"
-	IndividualColorPrintPages []int `json:"individual_color_print_pages,omitempty"` // Optional: Array of page numbers (1-indexed) to print in color
-	SkipPages []int `json:"skip_pages,omitempty"` // Optional: Array of page numbers (1-indexed) to skip during printing
 	BackToBack *bool `json:"back_to_back,omitempty"` // Optional: true for duplex printing (both sides), false for simplex (one side)
+	PageOptions *printjob.PageOptions `json:"page_options,omitempty"` // Optional: Consolidated page options structure
 }
 
 // EditPrintJobOptions handles requests from partners and customers to edit print job options
@@ -116,20 +113,6 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		partnerID = printJob.PartnerID
 	}
 
-	// Validate page range if both are provided
-	if req.StartPage != nil && req.EndPage != nil {
-		if *req.StartPage > *req.EndPage {
-			log.Printf("WARNING: Invalid page range - start_page (%d) > end_page (%d)", *req.StartPage, *req.EndPage)
-			h.sendErrorResponse(w, http.StatusBadRequest, "Invalid page range", "start_page must be less than or equal to end_page")
-			return
-		}
-		if *req.StartPage < 1 || *req.EndPage < 1 {
-			log.Printf("WARNING: Invalid page range - pages must be >= 1")
-			h.sendErrorResponse(w, http.StatusBadRequest, "Invalid page range", "Page numbers must be greater than 0")
-			return
-		}
-	}
-
 	// Validate num_copies if provided
 	if req.NumCopies != nil && *req.NumCopies < 1 {
 		log.Printf("WARNING: Invalid num_copies - must be >= 1")
@@ -137,24 +120,52 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Validate page_filter_type if provided
-	if req.PageFilterType != nil {
-		switch *req.PageFilterType {
-		case "all", "odd", "even":
-		default:
-			log.Printf("WARNING: Invalid page_filter_type '%s'", *req.PageFilterType)
-			h.sendErrorResponse(w, http.StatusBadRequest, "Invalid page_filter_type", "Allowed values: all, odd, even")
-			return
-		}
-	}
-
-	// Validate skip_pages if provided
-	if req.SkipPages != nil {
-		for _, pageNum := range req.SkipPages {
-			if pageNum < 1 {
-				log.Printf("WARNING: Invalid skip_pages - page numbers must be >= 1, found: %d", pageNum)
-				h.sendErrorResponse(w, http.StatusBadRequest, "Invalid skip_pages", "Page numbers in skip_pages must be greater than 0")
+	// Validate page_options if provided
+	if req.PageOptions != nil {
+		// Validate page range if both are provided
+		if req.PageOptions.StartPage != nil && req.PageOptions.EndPage != nil {
+			if *req.PageOptions.StartPage > *req.PageOptions.EndPage {
+				log.Printf("WARNING: Invalid page range - start_page (%d) > end_page (%d)", *req.PageOptions.StartPage, *req.PageOptions.EndPage)
+				h.sendErrorResponse(w, http.StatusBadRequest, "Invalid page range", "start_page must be less than or equal to end_page")
 				return
+			}
+			if *req.PageOptions.StartPage < 1 || *req.PageOptions.EndPage < 1 {
+				log.Printf("WARNING: Invalid page range - pages must be >= 1")
+				h.sendErrorResponse(w, http.StatusBadRequest, "Invalid page range", "Page numbers must be greater than 0")
+				return
+			}
+		}
+
+		// Validate filter_type if provided
+		if req.PageOptions.FilterType != nil {
+			switch *req.PageOptions.FilterType {
+			case "all", "odd", "even":
+			default:
+				log.Printf("WARNING: Invalid filter_type '%s'", *req.PageOptions.FilterType)
+				h.sendErrorResponse(w, http.StatusBadRequest, "Invalid filter_type", "Allowed values: all, odd, even")
+				return
+			}
+		}
+
+		// Validate skip_pages if provided
+		if req.PageOptions.SkipPages != nil {
+			for _, pageNum := range req.PageOptions.SkipPages {
+				if pageNum < 1 {
+					log.Printf("WARNING: Invalid skip_pages - page numbers must be >= 1, found: %d", pageNum)
+					h.sendErrorResponse(w, http.StatusBadRequest, "Invalid skip_pages", "Page numbers in skip_pages must be greater than 0")
+					return
+				}
+			}
+		}
+
+		// Validate color_pages if provided
+		if req.PageOptions.ColorPages != nil {
+			for _, pageNum := range req.PageOptions.ColorPages {
+				if pageNum < 1 {
+					log.Printf("WARNING: Invalid color_pages - page numbers must be >= 1, found: %d", pageNum)
+					h.sendErrorResponse(w, http.StatusBadRequest, "Invalid color_pages", "Page numbers in color_pages must be greater than 0")
+					return
+				}
 			}
 		}
 	}
@@ -166,32 +177,27 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 	if user.UserType == "customer" {
 		accountIDPtr = &accountID
 	}
-	// Handle individual_color_print_pages: if provided, update it
-	// Empty array [] means clear individual color pages (set to NULL, use global color setting)
-	// nil means don't update (keep existing value)
-	// We use a pointer to distinguish "not provided" (nil) from "empty array provided" (pointer to empty slice)
+	
+	// Extract page options from page_options structure
+	var startPagePtr *int
+	var endPagePtr *int
+	var pageFilterTypePtr *string
 	var individualColorPagesPtr *[]int
-	if req.IndividualColorPrintPages != nil {
-		// Field was provided in request (could be empty or non-empty)
-		// Always set the pointer so repository knows to update
-		// Empty slice will be handled in repository to set NULL
-		individualColorPagesPtr = &req.IndividualColorPrintPages
-	}
-	// If req.IndividualColorPrintPages is nil, individualColorPagesPtr stays nil (don't update)
-	
-	// Handle skip_pages: if provided, update it
-	// Empty array [] means clear skip pages (set to NULL, no pages to skip)
-	// nil means don't update (keep existing value)
 	var skipPagesPtr *[]int
-	if req.SkipPages != nil {
-		// Field was provided in request (could be empty or non-empty)
-		// Always set the pointer so repository knows to update
-		// Empty slice will be handled in repository to set NULL
-		skipPagesPtr = &req.SkipPages
-	}
-	// If req.SkipPages is nil, skipPagesPtr stays nil (don't update)
 	
-	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, req.StartPage, req.EndPage, req.PageFilterType, individualColorPagesPtr, skipPagesPtr, req.BackToBack)
+	if req.PageOptions != nil {
+		startPagePtr = req.PageOptions.StartPage
+		endPagePtr = req.PageOptions.EndPage
+		pageFilterTypePtr = req.PageOptions.FilterType
+		if req.PageOptions.ColorPages != nil {
+			individualColorPagesPtr = &req.PageOptions.ColorPages
+		}
+		if req.PageOptions.SkipPages != nil {
+			skipPagesPtr = &req.PageOptions.SkipPages
+		}
+	}
+	
+	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPagesPtr, skipPagesPtr, req.BackToBack)
 	if err != nil {
 		log.Printf("ERROR: Failed to update print job options for '%s' - %v", req.Filename, err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to update print job options")
@@ -205,8 +211,8 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		// Still return success since update succeeded
 	}
 
-	log.Printf("SUCCESS: Print job options updated - User: %s (Type: %s), Filename: %s, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v, SkipPages: %v, BackToBack: %v",
-		user.ID, user.UserType, req.Filename, req.Color, req.NumCopies, req.StartPage, req.EndPage, req.PageFilterType, req.IndividualColorPrintPages, req.SkipPages, req.BackToBack)
+	log.Printf("SUCCESS: Print job options updated - User: %s (Type: %s), Filename: %s, Color: %v, NumCopies: %v, PageOptions: %+v, BackToBack: %v",
+		user.ID, user.UserType, req.Filename, req.Color, req.NumCopies, req.PageOptions, req.BackToBack)
 
 	// Build response
 	response := map[string]interface{}{
@@ -219,22 +225,16 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 	if updatedJob != nil {
 		response["color"] = updatedJob.Color
 		response["num_copies"] = updatedJob.NumCopies
-		response["start_page"] = updatedJob.StartPage
-		response["end_page"] = updatedJob.EndPage
-		response["page_filter_type"] = updatedJob.PageFilterType
-		response["individual_color_print_pages"] = updatedJob.IndividualColorPrintPages
-		response["skip_pages"] = updatedJob.SkipPages
+		response["page_options"] = updatedJob.PageOptions
 		response["back_to_back"] = updatedJob.BackToBack
 	} else {
 		// Fallback to request values if we couldn't retrieve updated job
 		response["color"] = req.Color
 		response["num_copies"] = req.NumCopies
-		response["start_page"] = req.StartPage
-		response["end_page"] = req.EndPage
-		response["page_filter_type"] = req.PageFilterType
-		response["individual_color_print_pages"] = req.IndividualColorPrintPages
-		response["skip_pages"] = req.SkipPages
 		response["back_to_back"] = req.BackToBack
+		if req.PageOptions != nil {
+			response["page_options"] = req.PageOptions
+		}
 	}
 
 	h.sendJSONResponse(w, http.StatusOK, response)
