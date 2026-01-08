@@ -20,9 +20,9 @@ type Services struct {
 	OTPService        *otp.OTPService
 	JWTService        *jwt.JWTService
 	// Rate limiters for different endpoint categories
-	AuthRateLimiter    *rate_limiter.RateLimiter // 5 req/min - Stop brute force attacks
-	SearchRateLimiter  *rate_limiter.RateLimiter // 20 req/min - Save DB resources
-	ProfileRateLimiter *rate_limiter.RateLimiter // 50 req/min - Normal UX
+	AuthRateLimiter    *rate_limiter.RateLimiter // 10 req/min - Stop brute force attacks (increased from 5)
+	SearchRateLimiter  *rate_limiter.RateLimiter // 100 req/min - Shop listing (increased from 20)
+	ProfileRateLimiter *rate_limiter.RateLimiter // 150 req/min - Dashboard operations (increased from 50)
 	// Legacy: Keep for backward compatibility (defaults to ProfileRateLimiter)
 	RateLimiter *rate_limiter.RateLimiter
 }
@@ -46,14 +46,14 @@ func setupServices(
 	jwtService := jwt.NewJWTService(cfg.JWTSecret)
 
 	// Initialize rate limiters for different endpoint categories
-	// Auth endpoints: 5 req/min - Stop brute force attacks on login/signup
-	authRateLimiter := rate_limiter.NewRateLimiter(redisClient, 5, time.Minute)
+	// Auth endpoints: 10 req/min - Stop brute force attacks on login/signup (increased from 5)
+	authRateLimiter := rate_limiter.NewRateLimiter(redisClient, 10, time.Minute)
 	
-	// Search endpoints: 20 req/min - Save DB resources for heavy queries
-	searchRateLimiter := rate_limiter.NewRateLimiter(redisClient, 20, time.Minute)
+	// Search endpoints: 100 req/min - Shop listing page (increased from 20)
+	searchRateLimiter := rate_limiter.NewRateLimiter(redisClient, 100, time.Minute)
 	
-	// Profile/Data endpoints: 50 req/min - Normal UX for data retrieval
-	profileRateLimiter := rate_limiter.NewRateLimiter(redisClient, 50, time.Minute)
+	// Profile/Data endpoints: 150 req/min - Dashboard operations (partner/student dashboards) (increased from 50)
+	profileRateLimiter := rate_limiter.NewRateLimiter(redisClient, 150, time.Minute)
 
 	return &Services{
 		GoogleAuthService: googleAuthService,

@@ -6,6 +6,7 @@ type PartnerProfile struct {
 	AccountID int64  `db:"account_id" json:"account_id"`
 	ShopName  string `db:"shop_name" json:"shop_name"`
 	PrinterID string `db:"printer_id" json:"printer_id,omitempty"`
+	Status    bool   `db:"status" json:"status"` // Authorization status: true = authorized (visible), false = pending (hidden)
 }
 
 // CreatePartnerProfileRequest represents the request to create a partner profile

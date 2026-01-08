@@ -77,9 +77,9 @@ func (a *Application) RegisterRoutes() {
 	routes.RegisterRoutes(
 		a.authHandler,
 		printerHandler,
-		a.services.AuthRateLimiter,    // 5 req/min for auth endpoints
-		a.services.SearchRateLimiter,  // 20 req/min for search endpoints
-		a.services.ProfileRateLimiter, // 200 req/min for profile/data endpoints
+		a.services.AuthRateLimiter,    // 10 req/min for auth endpoints
+		a.services.SearchRateLimiter,  // 100 req/min for search endpoints (shop listing)
+		a.services.ProfileRateLimiter, // 150 req/min for profile/data endpoints (dashboards)
 		a.authMiddlewareFunc,
 		cors.CORS,
 		a.redisClient,
@@ -123,7 +123,7 @@ func (a *Application) RegisterRoutes() {
 	)
 
 	// Register test print routes
-	// Profile/Data endpoints: 200 req/min - Normal UX for data operations
+	// Profile/Data endpoints: 150 req/min - Dashboard operations (partner/student dashboards)
 	http.HandleFunc("/api/test-print/upload", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(uploadHandler.UploadFile))))
 	http.HandleFunc("/api/test-print/list", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListFiles)))) // Partner: list all files
 	http.HandleFunc("/api/test-print/my-files", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ListCustomerFiles)))) // Customer: list their own files
@@ -145,7 +145,7 @@ func (a *Application) RegisterRoutes() {
 	// Initialize shop handler
 	shopHandler := shop_handler.NewShopHandler(a.repositories.PartnerProfileRepository)
 
-	// Register shop routes - Search endpoint: 20 req/min (DB heavy query)
+	// Register shop routes - Search endpoint: 100 req/min (Shop listing page)
 	http.HandleFunc("/api/shops/names", cors.CORS(a.services.SearchRateLimiter.LimitMiddleware(shopHandler.GetShopNames)))
 
 	// Register WebSocket routes (hub already initialized above)
