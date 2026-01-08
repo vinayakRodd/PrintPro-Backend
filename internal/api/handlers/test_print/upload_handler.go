@@ -209,6 +209,10 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		backToBackPtr = &backToBack
 	}
 
+	// Note: delete_after_print is NOT available for customers during upload
+	// Only partners can set this via edit-options API
+	var deleteAfterPrintPtr *bool = nil
+
 	// Validate page range if both are provided
 	if startPagePtr != nil && endPagePtr != nil {
 		if *startPagePtr > *endPagePtr {
@@ -345,7 +349,7 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			accountIDPtr = &accountID
 		}
 		
-		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages, skipPages, backToBackPtr)
+		printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages, skipPages, backToBackPtr, deleteAfterPrintPtr)
 		if err != nil {
 			log.Printf("ERROR: Failed to create print job in database - %v", err)
 			// Don't fail the upload, but log the error

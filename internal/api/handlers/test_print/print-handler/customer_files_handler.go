@@ -141,6 +141,7 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 			"p_type":                      job.PType,
 			"page_options":                job.PageOptions, // New consolidated structure
 			"back_to_back":                job.BackToBack,
+			"delete_after_print":         job.DeleteAfterPrint,
 			// Legacy fields for backward compatibility
 			"start_page":                  job.StartPage,
 			"end_page":                    job.EndPage,
