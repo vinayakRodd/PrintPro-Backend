@@ -368,8 +368,8 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			log.Printf("ERROR: SECURITY ISSUE - Print job created with wrong partner_id! Expected: %d, Got: %d, File: %s", 
 				partnerID, printJob.PartnerID, filename)
 		}
-		log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s (account_id: %v), Shop: %s (partner_id: %d), File: %s, PType: %v, Color: %v, NumCopies: %v, StartPage: %v, EndPage: %v", 
-			printJob.ID, user.ID, printJob.AccountID, shopName, printJob.PartnerID, filename, printJob.PType, printJob.Color, printJob.NumCopies, printJob.StartPage, printJob.EndPage)
+		log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s (account_id: %v), Shop: %s (partner_id: %d), File: %s, PType: %v, Color: %v, NumCopies: %v, PageOptions: %+v", 
+			printJob.ID, user.ID, printJob.AccountID, shopName, printJob.PartnerID, filename, printJob.PType, printJob.Color, printJob.NumCopies, printJob.PageOptions)
 	}
 
 	log.Printf("SUCCESS: File uploaded - Customer: %s, Shop: %s, File: %s, Size: %d bytes", 
