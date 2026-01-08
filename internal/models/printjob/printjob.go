@@ -1,6 +1,18 @@
 package printjob
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
+
+// PageOptions represents page selection options stored in JSONB
+type PageOptions struct {
+	StartPage  *int    `json:"start_page,omitempty"`  // Starting page number (1-indexed, nil = from first page)
+	EndPage    *int    `json:"end_page,omitempty"`    // Ending page number (1-indexed, nil = to last page)
+	FilterType *string `json:"filter_type,omitempty"` // Page filter: "all" (default), "odd", "even"
+	SkipPages  []int   `json:"skip_pages,omitempty"`  // Array of page numbers (1-indexed) to skip
+	ColorPages []int   `json:"color_pages,omitempty"` // Array of page numbers (1-indexed) to print in color
+}
 
 // PrintJob represents a print job in the database
 type PrintJob struct {
@@ -13,16 +25,80 @@ type PrintJob struct {
 	PType     *string   `db:"p_type" json:"p_type,omitempty"`            // Nullable - print type (e.g., "A4", "A3", etc.)
 	Color     *bool     `db:"color" json:"color,omitempty"`              // Nullable - color printing (default: false)
 	NumCopies *int      `db:"num_copies" json:"num_copies,omitempty"`    // Nullable - number of copies (default: 1)
-	StartPage *int      `db:"start_page" json:"start_page,omitempty"`    // Nullable - starting page number (1-indexed, NULL = from first page)
-	EndPage   *int      `db:"end_page" json:"end_page,omitempty"`        // Nullable - ending page number (1-indexed, NULL = to last page)
-	PageFilterType *string `db:"page_filter_type" json:"page_filter_type,omitempty"` // Optional page filter: "all" (default), "odd", "even"
-	IndividualColorPrintPages []int `db:"individual_color_print_pages" json:"individual_color_print_pages,omitempty"` // Array of page numbers (1-indexed) to print in color
-	SkipPages []int `db:"skip_pages" json:"skip_pages,omitempty"` // Array of page numbers (1-indexed) to skip during printing
+	PageOptions PageOptions `db:"page_options" json:"page_options,omitempty"` // Consolidated page selection options (JSONB)
 	BackToBack *bool `db:"back_to_back" json:"back_to_back,omitempty"` // Nullable - true for duplex printing (both sides), false for simplex (one side)
 	Status    *string   `db:"status" json:"status,omitempty"`            // Nullable - pending, processing, completed, failed, cancelled
 	TotalCost *string   `db:"total_cost" json:"total_cost,omitempty"`    // Nullable (calculated later) - PostgreSQL numeric type
 	CreatedAt *time.Time `db:"created_at" json:"created_at,omitempty"`   // Nullable
 	UpdatedAt *time.Time `db:"updated_at" json:"updated_at,omitempty"`  // Nullable
+	
+	// Legacy fields - kept for backward compatibility during migration
+	// These are populated from PageOptions for API responses
+	StartPage *int `json:"start_page,omitempty"` // Deprecated: use page_options.start_page
+	EndPage   *int `json:"end_page,omitempty"`   // Deprecated: use page_options.end_page
+	PageFilterType *string `json:"page_filter_type,omitempty"` // Deprecated: use page_options.filter_type
+	IndividualColorPrintPages []int `json:"individual_color_print_pages,omitempty"` // Deprecated: use page_options.color_pages
+	SkipPages []int `json:"skip_pages,omitempty"` // Deprecated: use page_options.skip_pages
+}
+
+// PopulateLegacyFields populates legacy fields from PageOptions for backward compatibility
+func (pj *PrintJob) PopulateLegacyFields() {
+	pj.StartPage = pj.PageOptions.StartPage
+	pj.EndPage = pj.PageOptions.EndPage
+	pj.PageFilterType = pj.PageOptions.FilterType
+	pj.IndividualColorPrintPages = pj.PageOptions.ColorPages
+	pj.SkipPages = pj.PageOptions.SkipPages
+}
+
+// ScanPageOptions scans JSONB into PageOptions struct
+func ScanPageOptions(src interface{}) (PageOptions, error) {
+	var opts PageOptions
+	if src == nil {
+		return opts, nil
+	}
+	
+	var jsonBytes []byte
+	switch v := src.(type) {
+	case []byte:
+		jsonBytes = v
+	case string:
+		jsonBytes = []byte(v)
+	case map[string]interface{}:
+		// Already parsed JSONB object
+		if len(v) == 0 {
+			return opts, nil
+		}
+		// Convert map to JSON bytes
+		var err error
+		jsonBytes, err = json.Marshal(v)
+		if err != nil {
+			return opts, err
+		}
+	default:
+		// Try to marshal to JSON first
+		var err error
+		jsonBytes, err = json.Marshal(src)
+		if err != nil {
+			return opts, err
+		}
+	}
+	
+	if len(jsonBytes) == 0 || string(jsonBytes) == "null" || string(jsonBytes) == "{}" {
+		return opts, nil
+	}
+	
+	err := json.Unmarshal(jsonBytes, &opts)
+	if err != nil {
+		return opts, err
+	}
+	
+	// Set default filter_type if not provided
+	if opts.FilterType == nil || *opts.FilterType == "" {
+		defaultFilter := "all"
+		opts.FilterType = &defaultFilter
+	}
+	
+	return opts, nil
 }
 
 // CreatePrintJobRequest represents the request to create a new print job
