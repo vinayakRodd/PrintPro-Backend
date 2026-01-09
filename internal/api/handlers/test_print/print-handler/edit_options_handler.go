@@ -218,9 +218,6 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		// Still return success since update succeeded
 	}
 
-	log.Printf("SUCCESS: Print job options updated - User: %s (Type: %s), Filename: %s, Color: %v, NumCopies: %v, PageOptions: %+v, BackToBack: %v, DeleteAfterPrint: %v",
-		user.ID, user.UserType, req.Filename, req.Color, req.NumCopies, req.PageOptions, req.BackToBack, req.DeleteAfterPrint)
-
 	// Build response
 	response := map[string]interface{}{
 		"success":  true,
@@ -232,9 +229,20 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 	if updatedJob != nil {
 		response["color"] = updatedJob.Color
 		response["num_copies"] = updatedJob.NumCopies
+		// Always include page_options (even if empty) - matches list API format
+		// Log what we're about to return
+		log.Printf("DEBUG: Updated job PageOptions - StartPage: %v, EndPage: %v, FilterType: %v, SkipPages: %v, ColorPages: %v",
+			updatedJob.PageOptions.StartPage, updatedJob.PageOptions.EndPage, updatedJob.PageOptions.FilterType,
+			updatedJob.PageOptions.SkipPages, updatedJob.PageOptions.ColorPages)
+		
 		response["page_options"] = updatedJob.PageOptions
 		response["back_to_back"] = updatedJob.BackToBack
 		response["delete_after_print"] = updatedJob.DeleteAfterPrint
+		
+		// Log the actual response being sent
+		responseJSON, _ := json.MarshalIndent(response, "", "  ")
+		log.Printf("SUCCESS: Print job options updated - User: %s (Type: %s), Filename: %s\nResponse: %s",
+			user.ID, user.UserType, req.Filename, string(responseJSON))
 	} else {
 		// Fallback to request values if we couldn't retrieve updated job
 		response["color"] = req.Color
@@ -243,7 +251,13 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		response["delete_after_print"] = req.DeleteAfterPrint
 		if req.PageOptions != nil {
 			response["page_options"] = req.PageOptions
+		} else {
+			// Return empty page_options if not provided
+			response["page_options"] = printjob.PageOptions{}
 		}
+		
+		log.Printf("WARNING: Using request values in response (could not retrieve updated job) - User: %s, Filename: %s, PageOptions: %+v",
+			user.ID, req.Filename, req.PageOptions)
 	}
 
 	h.sendJSONResponse(w, http.StatusOK, response)

@@ -139,9 +139,9 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		if job.PartnerID != partnerID {
 			log.Printf("ERROR: CRITICAL SECURITY ISSUE - File '%s' (job ID: %d) has partner_id %d but expected %d - SKIPPING", 
 				filename, job.ID, job.PartnerID, partnerID)
-			continue
-		}
-		
+				continue
+			}
+
 		// Verify file actually exists in ready folder
 		filePath := filepath.Join(readyDir, filename)
 		fileInfo, err := os.Stat(filePath)
@@ -149,28 +149,28 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			log.Printf("DEBUG: File '%s' exists in database for partner_id %d but not in ready folder (may be archived)", filename, partnerID)
 			continue
 		}
-		if err != nil {
+			if err != nil {
 			log.Printf("WARNING: Failed to stat file '%s' - %v", filename, err)
-			continue
-		}
+				continue
+			}
 
-		// Determine status based on Redis queues
-		var status string
-		if processingQueueMap[filename] {
-			// File is in processing queue
-			status = "processing"
-			processingCount++
-		} else if readyQueueMap[filename] {
-			// File is in ready queue
-			status = "ready"
-			readyCount++
-		} else {
-			// File exists in ready folder but not in any queue (newly uploaded, not queued yet)
-			status = "ready"
-			readyCount++
-		}
+			// Determine status based on Redis queues
+			var status string
+			if processingQueueMap[filename] {
+				// File is in processing queue
+				status = "processing"
+				processingCount++
+			} else if readyQueueMap[filename] {
+				// File is in ready queue
+				status = "ready"
+				readyCount++
+			} else {
+				// File exists in ready folder but not in any queue (newly uploaded, not queued yet)
+				status = "ready"
+				readyCount++
+			}
 
-		fileList = append(fileList, map[string]interface{}{
+			fileList = append(fileList, map[string]interface{}{
 			"filename":                    filename,
 			"size":                        fileInfo.Size(),
 			"modified_at":                 fileInfo.ModTime().Format("2006-01-02T15:04:05Z07:00"),

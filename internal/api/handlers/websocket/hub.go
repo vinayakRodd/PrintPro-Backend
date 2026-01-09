@@ -86,3 +86,15 @@ func (h *Hub) SendToPrinter(printerID string, message []byte) error {
 	}
 }
 
+// ListConnectedPrinters returns a list of all connected printer IDs (for debugging)
+func (h *Hub) ListConnectedPrinters() []string {
+	var printerIDs []string
+	h.connections.Range(func(key, value interface{}) bool {
+		if printerID, ok := key.(string); ok {
+			printerIDs = append(printerIDs, printerID)
+		}
+		return true
+	})
+	return printerIDs
+}
+

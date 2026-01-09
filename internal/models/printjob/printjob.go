@@ -48,9 +48,42 @@ func ScanPageOptions(src interface{}) (PageOptions, error) {
 	case string:
 		jsonBytes = []byte(v)
 	case map[string]interface{}:
-		// Already parsed JSONB object
+		// Already parsed JSONB object from PostgreSQL
 		if len(v) == 0 {
 			return opts, nil
+		}
+		// Convert arrays from []interface{} with float64 to []int
+		if skipPagesRaw, ok := v["skip_pages"]; ok && skipPagesRaw != nil {
+			if skipPagesArr, ok := skipPagesRaw.([]interface{}); ok {
+				skipPages := make([]int, 0, len(skipPagesArr))
+				for _, item := range skipPagesArr {
+					switch val := item.(type) {
+					case float64:
+						skipPages = append(skipPages, int(val))
+					case int:
+						skipPages = append(skipPages, val)
+					case int64:
+						skipPages = append(skipPages, int(val))
+					}
+				}
+				v["skip_pages"] = skipPages
+			}
+		}
+		if colorPagesRaw, ok := v["color_pages"]; ok && colorPagesRaw != nil {
+			if colorPagesArr, ok := colorPagesRaw.([]interface{}); ok {
+				colorPages := make([]int, 0, len(colorPagesArr))
+				for _, item := range colorPagesArr {
+					switch val := item.(type) {
+					case float64:
+						colorPages = append(colorPages, int(val))
+					case int:
+						colorPages = append(colorPages, val)
+					case int64:
+						colorPages = append(colorPages, int(val))
+					}
+				}
+				v["color_pages"] = colorPages
+			}
 		}
 		// Convert map to JSON bytes
 		var err error
