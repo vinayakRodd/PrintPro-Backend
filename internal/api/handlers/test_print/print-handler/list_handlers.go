@@ -154,20 +154,36 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Determine status based on Redis queues
+			// Determine status: Check database status first (source of truth), then Redis queues as fallback
 			var status string
-			if processingQueueMap[filename] {
-				// File is in processing queue
-				status = "processing"
-				processingCount++
-			} else if readyQueueMap[filename] {
-				// File is in ready queue
-				status = "ready"
-				readyCount++
+			
+			// CRITICAL: Check database status first - it's the source of truth
+			// Database status is updated when:
+			// 1. File is sent to agent → status = "processing"
+			// 2. Agent confirms → status = "completed"
+			if job.Status != nil && *job.Status != "" {
+				status = *job.Status
+				// Count based on status
+				if status == "processing" {
+					processingCount++
+				} else if status == "ready" || status == "pending" {
+					readyCount++
+				}
 			} else {
-				// File exists in ready folder but not in any queue (newly uploaded, not queued yet)
-				status = "ready"
-				readyCount++
+				// Fallback to Redis queues if database status is not set
+				if processingQueueMap[filename] {
+					// File is in processing queue
+					status = "processing"
+					processingCount++
+				} else if readyQueueMap[filename] {
+					// File is in ready queue
+					status = "ready"
+					readyCount++
+				} else {
+					// File exists in ready folder but not in any queue (newly uploaded, not queued yet)
+					status = "ready"
+					readyCount++
+				}
 			}
 
 			fileList = append(fileList, map[string]interface{}{
