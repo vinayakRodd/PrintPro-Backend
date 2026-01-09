@@ -44,6 +44,17 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("INFO: Agent pinged - Job atomically moved from ready to processing queue - File: %s", fileName)
 
+	// CRITICAL: Update database status to "processing" when file is sent to agent
+	// This ensures partner dashboard shows correct status immediately
+	if h.printJobRepo != nil {
+		if err := h.printJobRepo.UpdateStatus(ctx, fileName, "processing"); err != nil {
+			log.Printf("WARNING: Failed to update print job status to 'processing': %v", err)
+			// Continue - file will still be sent to agent
+		} else {
+			log.Printf("INFO: Print job status updated to 'processing' - File: %s", fileName)
+		}
+	}
+
 	// File is still in ready folder (we don't move it physically anymore)
 	// Read file from ready folder
 	filePath := filepath.Join(h.readyDir, fileName)
