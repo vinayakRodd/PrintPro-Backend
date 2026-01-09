@@ -336,33 +336,33 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	log.Printf("INFO: Upload - Shop: '%s', PartnerID: %d, Customer: %s, File: %s", 
 		shopName, partnerID, user.ID, filename)
 	
-	// Convert user.ID (string) to int64 for account_id
-	accountID, err := strconv.ParseInt(user.ID, 10, 64)
-	if err != nil {
-		log.Printf("WARNING: Failed to parse user ID '%s' - %v", user.ID, err)
-		accountID = 0
-	}
+		// Convert user.ID (string) to int64 for account_id
+		accountID, err := strconv.ParseInt(user.ID, 10, 64)
+		if err != nil {
+			log.Printf("WARNING: Failed to parse user ID '%s' - %v", user.ID, err)
+			accountID = 0
+		}
 
-	// Build file URL/path - use absolute file path
-	absFilePath, _ := filepath.Abs(finalFilePath)
-	fileURL := absFilePath
-	if fileURL == "" {
-		// Fallback to relative path if absolute path fails
-		fileURL = fmt.Sprintf("/api/test-print/preview?filename=%s", filename)
-	}
+		// Build file URL/path - use absolute file path
+		absFilePath, _ := filepath.Abs(finalFilePath)
+		fileURL := absFilePath
+		if fileURL == "" {
+			// Fallback to relative path if absolute path fails
+			fileURL = fmt.Sprintf("/api/test-print/preview?filename=%s", filename)
+		}
 
-	// Create print job in database
-	var accountIDPtr *int64
-	if accountID > 0 {
-		accountIDPtr = &accountID
-	}
-	
+		// Create print job in database
+		var accountIDPtr *int64
+		if accountID > 0 {
+			accountIDPtr = &accountID
+		}
+		
 	printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages, skipPages, backToBackPtr, deleteAfterPrintPtr)
-	if err != nil {
-		log.Printf("ERROR: Failed to create print job in database - %v", err)
-		// Don't fail the upload, but log the error
-		log.Printf("WARNING: File uploaded but print job not created in database")
-	} else {
+		if err != nil {
+			log.Printf("ERROR: Failed to create print job in database - %v", err)
+			// Don't fail the upload, but log the error
+			log.Printf("WARNING: File uploaded but print job not created in database")
+		} else {
 		// SECURITY: Verify the created print job has the correct partner_id
 		if printJob.PartnerID != partnerID {
 			log.Printf("ERROR: SECURITY ISSUE - Print job created with wrong partner_id! Expected: %d, Got: %d, File: %s", 

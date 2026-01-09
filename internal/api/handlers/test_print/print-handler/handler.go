@@ -122,9 +122,15 @@ func (h *PrintHandler) PrintFile(w http.ResponseWriter, r *http.Request) {
 	log.Printf("SUCCESS: File queued in Redis ready queue - Partner: %s, File: %s", user.ID, pdfFileName)
 	
 	// OPTIMIZATION: Send WebSocket notification IMMEDIATELY (don't wait for anything)
-	if h.wsHub != nil && targetPrinterID != "" {
-		_, connected := h.wsHub.GetConnection(targetPrinterID)
-		if connected {
+	// Use whatever printer_id the agent is actually connected with, not the database value
+	if h.wsHub != nil {
+		connectedPrinters := h.wsHub.ListConnectedPrinters()
+		if len(connectedPrinters) > 0 {
+			// Send to the first connected printer (or all if multiple)
+			// The agent connects with its own printer_id, so use that
+			actualPrinterID := connectedPrinters[0]
+			log.Printf("DEBUG: Using connected printer_id: '%s' (database had: '%s')", actualPrinterID, targetPrinterID)
+			
 			// Send notification message with filename
 			notification := map[string]interface{}{
 				"action": "print_job_available",
@@ -137,15 +143,25 @@ func (h *PrintHandler) PrintFile(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				log.Printf("ERROR: Failed to marshal WebSocket notification: %v", err)
 			} else {
-				if err := h.wsHub.SendToPrinter(targetPrinterID, notificationJSON); err != nil {
-					log.Printf("WARNING: Failed to send WebSocket notification: %v (agent will poll instead)", err)
-				} else {
-					log.Printf("SUCCESS: WebSocket notification sent to printer_id: '%s' for file: %s", targetPrinterID, pdfFileName)
+				// Send to all connected printers (in case there are multiple)
+				successCount := 0
+				for _, printerID := range connectedPrinters {
+					if err := h.wsHub.SendToPrinter(printerID, notificationJSON); err != nil {
+						log.Printf("WARNING: Failed to send WebSocket notification to '%s': %v", printerID, err)
+					} else {
+						log.Printf("SUCCESS: WebSocket notification sent to printer_id: '%s' for file: %s", printerID, pdfFileName)
+						successCount++
+					}
+				}
+				if successCount == 0 {
+					log.Printf("WARNING: Failed to send WebSocket notification to any connected printer (agent will poll instead)")
 				}
 			}
 		} else {
-			log.Printf("DEBUG: Printer '%s' not connected via WebSocket (agent will poll Redis queue)", targetPrinterID)
+			log.Printf("DEBUG: No WebSocket connections currently active (agent will poll Redis queue)")
 		}
+	} else {
+		log.Printf("DEBUG: WebSocket hub is nil - cannot send notification")
 	}
 
 	// Return success response with processing status

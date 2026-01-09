@@ -335,61 +335,47 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 		argIndex++
 	}
 	
-	// Handle page_options update - merge with existing page_options
-	// We need to get existing page_options first, then merge with new values
-	pageOptsUpdated := false
-	var existingPageOpts printjob.PageOptions
-	
+	// Handle page_options update - merge with existing page_options using PostgreSQL JSONB merge
 	// Check if any page-related fields are being updated
 	if startPage != nil || endPage != nil || pageFilterType != nil || individualColorPages != nil || skipPages != nil {
-		// Get existing print job to merge page_options
-		existingJob, err := r.GetByFilename(ctx, filename)
-		if err == nil {
-			existingPageOpts = existingJob.PageOptions
-		}
-		
-		// Build updated page_options by merging existing with new values
-		updatedPageOpts := existingPageOpts
+		// Build partial page_options JSONB object with only the fields being updated
+		partialPageOpts := make(map[string]interface{})
 		
 		if startPage != nil {
-			updatedPageOpts.StartPage = startPage
-			pageOptsUpdated = true
+			partialPageOpts["start_page"] = *startPage
 		}
 		if endPage != nil {
-			updatedPageOpts.EndPage = endPage
-			pageOptsUpdated = true
+			partialPageOpts["end_page"] = *endPage
 		}
 		if pageFilterType != nil {
-			updatedPageOpts.FilterType = pageFilterType
-			pageOptsUpdated = true
+			partialPageOpts["filter_type"] = *pageFilterType
 		}
 		if individualColorPages != nil {
 			if len(*individualColorPages) == 0 {
-				updatedPageOpts.ColorPages = nil // Clear
+				partialPageOpts["color_pages"] = []int{} // Clear array - use empty array instead of nil
 			} else {
-				updatedPageOpts.ColorPages = *individualColorPages
+				partialPageOpts["color_pages"] = *individualColorPages
 			}
-			pageOptsUpdated = true
 		}
 		if skipPages != nil {
 			if len(*skipPages) == 0 {
-				updatedPageOpts.SkipPages = nil // Clear
+				partialPageOpts["skip_pages"] = []int{} // Clear array - use empty array instead of nil
 			} else {
-				updatedPageOpts.SkipPages = *skipPages
+				partialPageOpts["skip_pages"] = *skipPages
 			}
-			pageOptsUpdated = true
 		}
 		
-		if pageOptsUpdated {
-			// Marshal updated page_options to JSONB
-			pageOptsJSON, err := json.Marshal(updatedPageOpts)
-			if err != nil {
-				return fmt.Errorf("failed to marshal page_options: %w", err)
-			}
-			updates = append(updates, fmt.Sprintf("page_options = $%d::jsonb", argIndex))
-			args = append(args, string(pageOptsJSON))
-			argIndex++
+		// Marshal partial page_options to JSONB
+		partialPageOptsJSON, err := json.Marshal(partialPageOpts)
+		if err != nil {
+			return fmt.Errorf("failed to marshal partial page_options: %w", err)
 		}
+		
+		// Use PostgreSQL JSONB merge operator (||) to merge with existing page_options
+		// This preserves existing fields that aren't being updated
+		updates = append(updates, fmt.Sprintf("page_options = COALESCE(page_options, '{}'::jsonb) || $%d::jsonb", argIndex))
+		args = append(args, string(partialPageOptsJSON))
+		argIndex++
 	}
 	
 	// Handle back_to_back update
