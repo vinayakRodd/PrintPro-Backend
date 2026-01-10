@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/services/jwt"
 	"print-pro-backend/internal/services/session"
 )
@@ -12,13 +13,17 @@ import (
 type RefreshTokenHandler struct {
 	jwtService     *jwt.JWTService
 	sessionService *session.SessionService
+	tokenHelper    *TokenHelper
+	config         *config.Config
 }
 
 // NewRefreshTokenHandler creates a new RefreshTokenHandler instance
-func NewRefreshTokenHandler(jwtService *jwt.JWTService, sessionService *session.SessionService) *RefreshTokenHandler {
+func NewRefreshTokenHandler(jwtService *jwt.JWTService, sessionService *session.SessionService, tokenHelper *TokenHelper, cfg *config.Config) *RefreshTokenHandler {
 	return &RefreshTokenHandler{
 		jwtService:     jwtService,
 		sessionService: sessionService,
+		tokenHelper:    tokenHelper,
+		config:         cfg,
 	}
 }
 
@@ -82,6 +87,16 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	}
 	log.Printf("✅ REFRESH: Refresh token found in Redis (not revoked)")
 
+	// TOKEN ROTATION: Invalidate old refresh token and generate new one
+	log.Printf("🔄 REFRESH: Rotating refresh token (invalidating old, generating new)")
+	
+	// Delete old refresh token from Redis
+	if err := h.sessionService.DeleteRefreshToken(ctx, refreshToken); err != nil {
+		log.Printf("WARNING: Failed to delete old refresh token from Redis: %v", err)
+		// Continue anyway - token will expire naturally
+	}
+	log.Printf("✅ REFRESH: Old refresh token invalidated in Redis")
+
 	// Generate new access token (use user_type from claims)
 	log.Printf("🔑 REFRESH: Generating new access token (expires in 15 minutes)")
 	newAccessToken, err := h.jwtService.GenerateAccessToken(claims.UserID, claims.Email, claims.UserType)
@@ -91,15 +106,52 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		return
 	}
 
-	log.Printf("✅ REFRESH: New access token generated successfully for user: %s", claims.UserID)
-	log.Printf("🎉 REFRESH: Token refresh completed - user can continue without re-login")
-	// SECURITY NOTE: newAccessToken contains sensitive data - never log it, only return in response
+	// Generate new refresh token (TOKEN ROTATION)
+	log.Printf("🔑 REFRESH: Generating new refresh token (expires in 7 days)")
+	newRefreshToken, err := h.jwtService.GenerateRefreshToken(claims.UserID, claims.Email, claims.UserType)
+	if err != nil {
+		log.Printf("ERROR: Failed to generate new refresh token - %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate refresh token", err.Error())
+		return
+	}
 
-	// Return new access token
+	// Store new refresh token in Redis
+	if err := h.sessionService.StoreRefreshToken(ctx, newRefreshToken, claims.UserID); err != nil {
+		log.Printf("ERROR: Failed to store new refresh token in Redis: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to store refresh token", err.Error())
+		return
+	}
+	log.Printf("✅ REFRESH: New refresh token stored in Redis")
+
+	// Set new refresh token cookie (TOKEN ROTATION)
+	refreshCookie := &http.Cookie{
+		Name:     "refresh_token",
+		Value:    newRefreshToken,
+		Path:     "/",
+		MaxAge:   7 * 24 * 60 * 60, // 7 days
+		HttpOnly: true,              // Prevents JavaScript access (XSS protection)
+		Secure:   h.config.SecureCookies, // Set via config (true in production with HTTPS)
+		SameSite: http.SameSiteLaxMode, // CSRF protection
+	}
+	
+	// Set domain if configured
+	if h.config.CookieDomain != "" {
+		refreshCookie.Domain = h.config.CookieDomain
+	}
+	
+	http.SetCookie(w, refreshCookie)
+	log.Printf("✅ REFRESH: New refresh token cookie set")
+
+	log.Printf("✅ REFRESH: New access token generated successfully for user: %s", claims.UserID)
+	log.Printf("🎉 REFRESH: Token refresh completed with rotation - user can continue without re-login")
+	// SECURITY NOTE: newAccessToken and newRefreshToken contain sensitive data - never log them, only return in response
+
+	// Return new access token and new refresh token (for Go agent compatibility)
 	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
-		"success":      true,
-		"access_token": newAccessToken,
-		"message":      "Access token refreshed successfully",
+		"success":       true,
+		"access_token":  newAccessToken,
+		"refresh_token": newRefreshToken, // New rotated refresh token
+		"message":       "Access token refreshed successfully",
 	})
 }
 
