@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -147,10 +148,36 @@ func (a *Application) RegisterRoutes() {
 	http.HandleFunc("/api/partner-agent/reprint", cors.CORS(optionalAuth(agentHandler.Reprint))) // Reprint endpoint - clears Redis and resets status
 
 	// Initialize shop handler
-	shopHandler := shop_handler.NewShopHandler(a.repositories.PartnerProfileRepository)
+	shopHandler := shop_handler.NewShopHandler(
+		a.repositories.PartnerProfileRepository,
+		a.repositories.ShopPreferenceRepository,
+		a.repositories.CustomerProfileRepository,
+	)
 
 	// Register shop routes - Search endpoint: 100 req/min (Shop listing page)
+	// Shop listing (public - no auth required)
 	http.HandleFunc("/api/shops/names", cors.CORS(a.services.SearchRateLimiter.LimitMiddleware(shopHandler.GetShopNames)))
+	
+	// Shop preference endpoints (protected - requires customer authentication)
+	// Profile/Data endpoints: 150 req/min - Dashboard operations
+	http.HandleFunc("/api/shops/preference", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			shopHandler.GetShopPreference(w, r)
+		case http.MethodPost:
+			shopHandler.SetShopPreference(w, r)
+		case http.MethodDelete:
+			shopHandler.DeleteShopPreference(w, r)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "Method not allowed",
+				"error":   "Only GET, POST, and DELETE methods are allowed",
+			})
+		}
+	}))))
 
 	// Register WebSocket routes (hub already initialized above)
 	http.HandleFunc("/ws/", cors.CORS(wsHandler.HandleWebSocket))
