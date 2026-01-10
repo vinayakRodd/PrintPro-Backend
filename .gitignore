@@ -57,3 +57,4 @@ migrations/
 # Partner agent files
 partner_agent_updated.py
 internal/api/handlers/partner_agent/
+printer_agents/
