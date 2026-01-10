@@ -127,18 +127,21 @@ func (h *LoginHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate tokens and set cookies (include user_type in JWT)
-	accessToken, _, err := h.tokenHelper.GenerateTokensAndSetCookies(w, authUser.ID, authUser.Email, accountRecord.UserType, ctx)
+	accessToken, refreshToken, err := h.tokenHelper.GenerateTokensAndSetCookies(w, authUser.ID, authUser.Email, accountRecord.UserType, ctx)
 	if err != nil {
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate tokens", err.Error())
 		return
 	}
 
-	// Return success response with access token (refresh token in cookie)
-	response := models.GoogleSignInResponse{
-		Success: true,
-		Message: "Partner login successful",
-		User:    authUser,
-		Token:   accessToken, // Access token in response body
+	// Return success response with both tokens (for Go agent compatibility)
+	// Refresh token is also in cookie for web frontend compatibility
+	response := map[string]interface{}{
+		"success":       true,
+		"message":      "Partner login successful",
+		"user":         authUser,
+		"access_token": accessToken,   // Access token in response body
+		"token":        accessToken,    // Alias for backward compatibility
+		"refresh_token": refreshToken, // Refresh token in response body (for Go agent)
 	}
 
 	h.sendJSONResponse(w, http.StatusOK, response)

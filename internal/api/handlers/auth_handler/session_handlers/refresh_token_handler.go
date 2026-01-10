@@ -3,6 +3,7 @@ package session_handlers
 import (
 	"log"
 	"net/http"
+	"strings"
 	"print-pro-backend/internal/services/jwt"
 	"print-pro-backend/internal/services/session"
 )
@@ -30,18 +31,36 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Get refresh token from cookie
+	// Get refresh token from cookie OR Authorization header (for Go agent)
 	// SECURITY: Never log the actual token value - only log status messages
-	cookie, err := r.Cookie("refresh_token")
-	if err != nil || cookie.Value == "" {
-		log.Printf("❌ REFRESH: Refresh token cookie not found")
+	var refreshToken string
+	ctx := r.Context()
+	
+	// Try Authorization header first (for Go agent)
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		parts := strings.Split(authHeader, " ")
+		if len(parts) == 2 && parts[0] == "Bearer" {
+			refreshToken = parts[1]
+			log.Printf("🔍 REFRESH: Refresh token found in Authorization header, validating...")
+		}
+	}
+	
+	// Fallback to cookie (for web frontend)
+	if refreshToken == "" {
+		cookie, err := r.Cookie("refresh_token")
+		if err == nil && cookie.Value != "" {
+			refreshToken = cookie.Value
+			log.Printf("🔍 REFRESH: Refresh token found in cookie, validating...")
+		}
+	}
+	
+	if refreshToken == "" {
+		log.Printf("❌ REFRESH: Refresh token not found in header or cookie")
 		sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Refresh token not found")
 		return
 	}
-
-	refreshToken := cookie.Value
-	ctx := r.Context()
-	log.Printf("🔍 REFRESH: Refresh token found in cookie, validating...")
+	
 	// SECURITY NOTE: refreshToken variable contains sensitive data - never log it
 
 	// Validate refresh token JWT

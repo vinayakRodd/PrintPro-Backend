@@ -17,6 +17,7 @@ import (
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
 	"print-pro-backend/internal/middleware/cors"
+	auth_middleware "print-pro-backend/internal/middleware/auth_middleware"
 )
 
 // Application holds all application dependencies
@@ -135,13 +136,15 @@ func (a *Application) RegisterRoutes() {
 	http.HandleFunc("/api/test-print/preview", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PreviewPDF))))
 	http.HandleFunc("/api/test-print/edit-options", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.EditPrintJobOptions))))
 
-	// Register partner agent routes (no auth required - agent will authenticate separately)
+	// Register partner agent routes (optional JWT auth - backward compatible with Python agent)
 	// No rate limiting for agent endpoints (internal communication)
-	http.HandleFunc("/api/partner-agent/fetch-job", cors.CORS(agentHandler.FetchJob))
-	http.HandleFunc("/api/partner-agent/confirm-print", cors.CORS(agentHandler.ConfirmPrint))
-	http.HandleFunc("/api/partner-agent/confirm", cors.CORS(agentHandler.ConfirmPrint)) // Keep for backward compatibility
-	http.HandleFunc("/api/partner-agent/sync-printers", cors.CORS(agentHandler.SyncPrinters))
-	http.HandleFunc("/api/partner-agent/reprint", cors.CORS(agentHandler.Reprint)) // Reprint endpoint - clears Redis and resets status
+	// OptionalAuthMiddleware allows requests without JWT (Python agent) or with JWT (Go agent)
+	optionalAuth := auth_middleware.OptionalAuthMiddleware(a.services.JWTService)
+	http.HandleFunc("/api/partner-agent/fetch-job", cors.CORS(optionalAuth(agentHandler.FetchJob)))
+	http.HandleFunc("/api/partner-agent/confirm-print", cors.CORS(optionalAuth(agentHandler.ConfirmPrint)))
+	http.HandleFunc("/api/partner-agent/confirm", cors.CORS(optionalAuth(agentHandler.ConfirmPrint))) // Keep for backward compatibility
+	http.HandleFunc("/api/partner-agent/sync-printers", cors.CORS(optionalAuth(agentHandler.SyncPrinters)))
+	http.HandleFunc("/api/partner-agent/reprint", cors.CORS(optionalAuth(agentHandler.Reprint))) // Reprint endpoint - clears Redis and resets status
 
 	// Initialize shop handler
 	shopHandler := shop_handler.NewShopHandler(a.repositories.PartnerProfileRepository)
