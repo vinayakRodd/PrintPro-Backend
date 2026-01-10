@@ -21,6 +21,7 @@ type Services struct {
 	JWTService        *jwt.JWTService
 	// Rate limiters for different endpoint categories
 	AuthRateLimiter    *rate_limiter.RateLimiter // 10 req/min - Stop brute force attacks (increased from 5)
+	RefreshRateLimiter *rate_limiter.RateLimiter // 30 req/min - Token refresh (higher than auth since it's called frequently)
 	SearchRateLimiter  *rate_limiter.RateLimiter // 100 req/min - Shop listing (increased from 20)
 	ProfileRateLimiter *rate_limiter.RateLimiter // 150 req/min - Dashboard operations (increased from 50)
 	// Legacy: Keep for backward compatibility (defaults to ProfileRateLimiter)
@@ -49,6 +50,9 @@ func setupServices(
 	// Auth endpoints: 10 req/min - Stop brute force attacks on login/signup (increased from 5)
 	authRateLimiter := rate_limiter.NewRateLimiter(redisClient, 10, time.Minute)
 	
+	// Refresh endpoints: 30 req/min - Token refresh (higher than auth since it's called frequently when tokens expire)
+	refreshRateLimiter := rate_limiter.NewRateLimiter(redisClient, 30, time.Minute)
+	
 	// Search endpoints: 100 req/min - Shop listing page (increased from 20)
 	searchRateLimiter := rate_limiter.NewRateLimiter(redisClient, 100, time.Minute)
 	
@@ -62,6 +66,7 @@ func setupServices(
 		OTPService:        otpService,
 		JWTService:        jwtService,
 		AuthRateLimiter:   authRateLimiter,
+		RefreshRateLimiter: refreshRateLimiter,
 		SearchRateLimiter: searchRateLimiter,
 		ProfileRateLimiter: profileRateLimiter,
 		RateLimiter:       profileRateLimiter, // Default to profile limiter for backward compatibility

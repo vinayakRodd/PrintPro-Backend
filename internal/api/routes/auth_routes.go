@@ -12,6 +12,7 @@ import (
 func RegisterAuthRoutes(
 	authHandler *auth_handler.AuthHandler,
 	authRateLimiter *rate_limiter.RateLimiter,    // 10 req/min for login/signup endpoints
+	refreshRateLimiter *rate_limiter.RateLimiter, // 30 req/min for refresh endpoint
 	profileRateLimiter *rate_limiter.RateLimiter, // 150 req/min for profile/data endpoints
 	authMiddlewareFunc func(http.HandlerFunc) http.HandlerFunc,
 	corsHandler func(http.HandlerFunc) http.HandlerFunc,
@@ -44,7 +45,7 @@ func RegisterAuthRoutes(
 	http.HandleFunc("/api/auth/otp/verify", corsHandler(authRateLimiter.LimitMiddleware(authHandler.VerifyOTP))) // OTP verification only
 	http.HandleFunc("/api/auth/reset-password", corsHandler(authRateLimiter.LimitMiddleware(authHandler.ResetPassword)))
 	http.HandleFunc("/api/auth/password/reset", corsHandler(authRateLimiter.LimitMiddleware(authHandler.ResetPassword))) // Alias for frontend
-	http.HandleFunc("/api/auth/refresh", corsHandler(authRateLimiter.LimitMiddleware(authHandler.RefreshToken))) // Refresh access token
+	http.HandleFunc("/api/auth/refresh", corsHandler(refreshRateLimiter.LimitMiddleware(authHandler.RefreshToken))) // Refresh access token - 30 req/min
 	
 	// Protected auth routes (require authentication) - Profile/Data: 200 req/min
 	http.HandleFunc("/api/auth/me", corsHandler(profileRateLimiter.LimitMiddleware(authMiddlewareFunc(authHandler.GetMe))))
