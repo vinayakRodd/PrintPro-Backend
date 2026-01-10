@@ -2,6 +2,7 @@
 test-print/ merge=ours
 docs/ merge=ours
 migrations/ merge=ours
+printer_agents/ merge=ours
 
 # Prevent partner agent files from being merged
 partner_agent_updated.py merge=ours
