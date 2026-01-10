@@ -89,6 +89,7 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	var individualColorPagesValue []int = nil // Default to nil (use global color setting)
 	var skipPagesValue []int = nil // Default to nil (no pages to skip)
 	var backToBackValue bool = false // Default to simplex (one side)
+	var selectedPrinterName string = "" // Selected printer name for this job
 	
 	if h.printJobRepo != nil {
 		printJob, err := h.printJobRepo.GetByFilename(ctx, fileName)
@@ -128,10 +129,27 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WARNING: PrintJobRepository not available, using defaults (color=false, copies=1, all pages)")
 	}
 
+	// MULTI-PRINTER SUPPORT: Select appropriate printer for this job
+	// Get synced printers from agent
+	syncedPrinters := h.GetSyncedPrinters()
+	if len(syncedPrinters) > 0 {
+		// Smart printer selection: prefer color printer for color jobs, otherwise first available
+		selectedPrinterName = h.selectPrinterForJob(syncedPrinters, colorValue, individualColorPagesValue)
+		log.Printf("INFO: Selected printer '%s' for job '%s' (Color: %v, Available printers: %d)", selectedPrinterName, fileName, colorValue, len(syncedPrinters))
+	} else {
+		log.Printf("WARNING: No synced printers available - agent will use default printer")
+	}
+
 	// Set headers so the agent knows the filename and print parameters
 	// Python script expects X-File-Name header
 	w.Header().Set("X-File-Name", fileName)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+	
+	// MULTI-PRINTER SUPPORT: Send selected printer name to agent
+	if selectedPrinterName != "" {
+		w.Header().Set("X-Print-Printer-Name", selectedPrinterName)
+		log.Printf("INFO: Sending printer name '%s' to agent for job '%s'", selectedPrinterName, fileName)
+	}
 	
 	// Send print parameters as headers for partner agent
 	w.Header().Set("X-Print-Color", fmt.Sprintf("%v", colorValue))      // "true" or "false"
@@ -190,3 +208,64 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	log.Printf("SUCCESS: File sent to agent - File: %s (job in processing queue, waiting for confirmation)", fileName)
 }
 
+// selectPrinterForJob intelligently selects a printer based on job requirements
+// Returns the printer name (string) that should handle this job
+func (h *AgentHandler) selectPrinterForJob(printers []map[string]interface{}, requiresColor bool, colorPages []int) string {
+	if len(printers) == 0 {
+		return ""
+	}
+
+	// If job requires color (either global color or individual color pages), prefer color-capable printers
+	if requiresColor || (colorPages != nil && len(colorPages) > 0) {
+		// Look for printers with "color" in name (case-insensitive) or status indicating color capability
+		for _, printer := range printers {
+			printerName := h.extractPrinterName(printer)
+			if printerName != "" {
+				// Check if printer name suggests color capability
+				nameUpper := strings.ToUpper(printerName)
+				if strings.Contains(nameUpper, "COLOR") || strings.Contains(nameUpper, "INKJET") || 
+				   strings.Contains(nameUpper, "PIXMA") || strings.Contains(nameUpper, "DESKJET") {
+					log.Printf("INFO: Selected color-capable printer '%s' for color job", printerName)
+					return printerName
+				}
+			}
+		}
+	}
+
+	// For non-color jobs or if no color printer found, use first available printer
+	// Extract printer name from first printer (could be string or map)
+	firstPrinterName := h.extractPrinterName(printers[0])
+	if firstPrinterName != "" {
+		log.Printf("INFO: Selected first available printer '%s'", firstPrinterName)
+		return firstPrinterName
+	}
+
+	// Fallback: return empty string (agent will use default)
+	log.Printf("WARNING: Could not extract printer name from synced printers, agent will use default")
+	return ""
+}
+
+// extractPrinterName extracts printer name from various formats
+// Supports: string, map[string]interface{} with "name" key
+func (h *AgentHandler) extractPrinterName(printer interface{}) string {
+	switch v := printer.(type) {
+	case string:
+		return v
+	case map[string]interface{}:
+		// Try "name" key first
+		if name, ok := v["name"].(string); ok && name != "" {
+			return name
+		}
+		// Try "printer_name" key
+		if name, ok := v["printer_name"].(string); ok && name != "" {
+			return name
+		}
+		// Try any string value in the map
+		for _, val := range v {
+			if str, ok := val.(string); ok && str != "" {
+				return str
+			}
+		}
+	}
+	return ""
+}
