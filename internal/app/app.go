@@ -78,6 +78,7 @@ func (a *Application) RegisterRoutes() {
 		a.authHandler,
 		printerHandler,
 		a.services.AuthRateLimiter,    // 10 req/min for auth endpoints
+		a.services.RefreshRateLimiter, // 30 req/min for refresh endpoint
 		a.services.SearchRateLimiter,  // 100 req/min for search endpoints (shop listing)
 		a.services.ProfileRateLimiter, // 150 req/min for profile/data endpoints (dashboards)
 		a.authMiddlewareFunc,

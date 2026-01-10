@@ -13,6 +13,7 @@ func RegisterRoutes(
 	authHandler *auth_handler.AuthHandler,
 	printerHandler *printer_handler.PrinterHandler,
 	authRateLimiter *rate_limiter.RateLimiter,    // 10 req/min for auth endpoints
+	refreshRateLimiter *rate_limiter.RateLimiter, // 30 req/min for refresh endpoint
 	searchRateLimiter *rate_limiter.RateLimiter,  // 100 req/min for search endpoints (shop listing)
 	profileRateLimiter *rate_limiter.RateLimiter, // 150 req/min for profile/data endpoints (dashboards)
 	authMiddlewareFunc func(http.HandlerFunc) http.HandlerFunc,
@@ -35,8 +36,8 @@ func RegisterRoutes(
 	http.HandleFunc("/api/printers", corsHandler(profileRateLimiter.LimitMiddleware(authMiddlewareFunc(printerHandler.GetPrintersHandler))))
 	
 	// Register auth routes with appropriate rate limiters
-	// Auth endpoints (login/signup): 5 req/min, Profile endpoints (/me, /user-type): 200 req/min
-	RegisterAuthRoutes(authHandler, authRateLimiter, profileRateLimiter, authMiddlewareFunc, corsHandler)
+	// Auth endpoints (login/signup): 10 req/min, Refresh: 30 req/min, Profile endpoints (/me, /user-type): 150 req/min
+	RegisterAuthRoutes(authHandler, authRateLimiter, refreshRateLimiter, profileRateLimiter, authMiddlewareFunc, corsHandler)
 
 	// Root handler should be last (catches all unmatched routes)
 	http.HandleFunc("/", corsHandler(handler))
