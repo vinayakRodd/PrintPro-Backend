@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"print-pro-backend/internal/models/printjob"
 	"strings"
 )
 
@@ -89,6 +90,8 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	var individualColorPagesValue []int = nil // Default to nil (use global color setting)
 	var skipPagesValue []int = nil // Default to nil (no pages to skip)
 	var backToBackValue bool = false // Default to simplex (one side)
+	var printTypeValue *string = nil // Default to nil (agent will use default/A4)
+	var cropOptionsValue *printjob.CropOptions = nil // Default to nil (no cropping)
 	var selectedPrinterName string = "" // Selected printer name for this job
 	
 	if h.printJobRepo != nil {
@@ -122,8 +125,18 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 			if printJob.BackToBack != nil {
 				backToBackValue = *printJob.BackToBack
 			}
-			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v, SkipPages: %v, BackToBack: %v", 
-				fileName, colorValue, numCopiesValue, startPageValue, endPageValue, pageFilterTypeValue, individualColorPagesValue, skipPagesValue, backToBackValue)
+			// Get print_type (prefer PrintType over PType)
+			if printJob.PrintType != nil {
+				printTypeValue = printJob.PrintType
+			} else if printJob.PType != nil {
+				printTypeValue = printJob.PType
+			}
+			// Get crop_options
+			if printJob.CropOptions != nil {
+				cropOptionsValue = printJob.CropOptions
+			}
+			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v, SkipPages: %v, BackToBack: %v, PrintType: %v, CropOptions: %+v", 
+				fileName, colorValue, numCopiesValue, startPageValue, endPageValue, pageFilterTypeValue, individualColorPagesValue, skipPagesValue, backToBackValue, printTypeValue, cropOptionsValue)
 		}
 	} else {
 		log.Printf("WARNING: PrintJobRepository not available, using defaults (color=false, copies=1, all pages)")
@@ -181,6 +194,21 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	}
 	// Send back_to_back parameter
 	w.Header().Set("X-Print-Back-To-Back", fmt.Sprintf("%v", backToBackValue))
+	
+	// Send print_type (paper size)
+	if printTypeValue != nil {
+		w.Header().Set("X-Print-Type", *printTypeValue)
+	}
+	
+	// Send crop_options (as JSON string)
+	if cropOptionsValue != nil {
+		cropOptionsJSON, err := json.Marshal(cropOptionsValue)
+		if err == nil {
+			w.Header().Set("X-Print-Crop-Options", string(cropOptionsJSON))
+		} else {
+			log.Printf("WARNING: Failed to marshal crop_options: %v", err)
+		}
+	}
 	
 	// Set content type based on file extension
 	ext := strings.ToLower(filepath.Ext(fileName))

@@ -186,6 +186,14 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Get print_type (prefer PrintType over PType)
+			var printType *string
+			if job.PrintType != nil {
+				printType = job.PrintType
+			} else if job.PType != nil {
+				printType = job.PType
+			}
+			
 			fileList = append(fileList, map[string]interface{}{
 			"filename":                    filename,
 			"size":                        fileInfo.Size(),
@@ -195,6 +203,8 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			"color":                       job.Color,
 			"num_copies":                  job.NumCopies,
 			"p_type":                      job.PType,
+			"print_type":                  printType,
+			"crop_options":                job.CropOptions,
 			"page_options":                job.PageOptions,
 			"back_to_back":                job.BackToBack,
 			"delete_after_print":         job.DeleteAfterPrint,
