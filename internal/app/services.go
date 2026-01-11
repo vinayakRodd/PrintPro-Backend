@@ -5,6 +5,7 @@ import (
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
 	rate_limiter "print-pro-backend/internal/middleware/rate_limiter"
+	"print-pro-backend/internal/services/cost_calculator"
 	"print-pro-backend/internal/services/email"
 	"print-pro-backend/internal/services/google_auth"
 	"print-pro-backend/internal/services/jwt"
@@ -19,6 +20,7 @@ type Services struct {
 	EmailService      *email.EmailService
 	OTPService        *otp.OTPService
 	JWTService        *jwt.JWTService
+	CostCalculator    *cost_calculator.CostCalculator
 	// Rate limiters for different endpoint categories
 	AuthRateLimiter    *rate_limiter.RateLimiter // 10 req/min - Stop brute force attacks (increased from 5)
 	RefreshRateLimiter *rate_limiter.RateLimiter // 30 req/min - Token refresh (higher than auth since it's called frequently)
@@ -59,12 +61,19 @@ func setupServices(
 	// Profile/Data endpoints: 150 req/min - Dashboard operations (partner/student dashboards) (increased from 50)
 	profileRateLimiter := rate_limiter.NewRateLimiter(redisClient, 150, time.Minute)
 
+	// Initialize cost calculator with default pricing
+	// TODO: Make these configurable per partner or via config file
+	defaultColorCostPerPage := 5.00 // rs.50 per color page
+	defaultBWCostPerPage := 1.00    // rs.1.00 per B&W page
+	costCalculator := cost_calculator.NewCostCalculator(defaultColorCostPerPage, defaultBWCostPerPage)
+
 	return &Services{
 		GoogleAuthService: googleAuthService,
 		SessionService:    sessionService,
 		EmailService:      emailService,
 		OTPService:        otpService,
 		JWTService:        jwtService,
+		CostCalculator:    costCalculator,
 		AuthRateLimiter:   authRateLimiter,
 		RefreshRateLimiter: refreshRateLimiter,
 		SearchRateLimiter: searchRateLimiter,

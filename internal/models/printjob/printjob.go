@@ -9,11 +9,12 @@ import (
 
 // PageOptions represents page selection options stored in JSONB
 type PageOptions struct {
-	StartPage  *int    `json:"start_page,omitempty"`  // Starting page number (1-indexed, nil = from first page)
-	EndPage    *int    `json:"end_page,omitempty"`    // Ending page number (1-indexed, nil = to last page)
-	FilterType *string `json:"filter_type,omitempty"` // Page filter: "all" (default), "odd", "even"
-	SkipPages  []int   `json:"skip_pages,omitempty"`  // Array of page numbers (1-indexed) to skip
-	ColorPages []int   `json:"color_pages,omitempty"` // Array of page numbers (1-indexed) to print in color
+	TotalPages  *int    `json:"total_pages,omitempty"`  // Total number of pages in the document (calculated from file)
+	StartPage   *int    `json:"start_page,omitempty"`   // Starting page number (1-indexed, nil = from first page)
+	EndPage     *int    `json:"end_page,omitempty"`     // Ending page number (1-indexed, nil = to last page)
+	FilterType  *string `json:"filter_type,omitempty"`  // Page filter: "all" (default), "odd", "even"
+	SkipPages   []int   `json:"skip_pages,omitempty"`   // Array of page numbers (1-indexed) to skip
+	ColorPages  []int   `json:"color_pages,omitempty"`  // Array of page numbers (1-indexed) to print in color (individual_color_pages)
 }
 
 // CropOptions represents crop margins in millimeters stored in JSONB

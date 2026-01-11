@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
 	"print-pro-backend/internal/models/printjob"
 	"strconv"
@@ -247,6 +248,56 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		log.Printf("WARNING: Failed to retrieve updated print job - %v", err)
 		// Still return success since update succeeded
+	}
+
+	// NOTE: Cost calculation and storage is deferred until job status becomes "completed"
+	// This ensures we only store the final cost after successful printing
+	// If the job is already completed, we should recalculate cost
+	if updatedJob != nil && updatedJob.Status != nil && *updatedJob.Status == "completed" {
+		if h.costCalculator != nil && h.jobCostRepo != nil {
+			// Get file path
+			readyDir := h.agentHandler.GetReadyDir()
+			filePath := filepath.Join(readyDir, req.Filename)
+			
+			// Use updated job's page options
+			pageOpts := updatedJob.PageOptions
+			
+			// Get individual color pages from page options
+			individualColorPages := []int{}
+			if len(pageOpts.ColorPages) > 0 {
+				individualColorPages = pageOpts.ColorPages
+			}
+			
+			// Calculate cost for completed job
+			jobCost, err := h.costCalculator.CalculateCost(
+				filePath,
+				pageOpts,
+				updatedJob.Color,
+				updatedJob.NumCopies,
+				individualColorPages,
+			)
+			
+			if err != nil {
+				log.Printf("WARNING: Failed to recalculate cost for completed print job - %v", err)
+			} else {
+				// Store cost in job_cost table
+				err = h.jobCostRepo.CreateOrUpdate(ctx, updatedJob.ID, jobCost)
+				if err != nil {
+					log.Printf("WARNING: Failed to update job cost - %v", err)
+				} else {
+					// Update total_cost in print_jobs table
+					err = h.jobCostRepo.UpdateTotalCostInPrintJob(ctx, updatedJob.ID, jobCost.TotalCost)
+					if err != nil {
+						log.Printf("WARNING: Failed to update total_cost in print_jobs - %v", err)
+					} else {
+						log.Printf("SUCCESS: Cost recalculated for completed job - Total: $%.2f (Color: %d pages, B&W: %d pages, Copies: %d)", 
+							jobCost.TotalCost, jobCost.ColorPages, jobCost.BlackWhitePages, jobCost.NumCopies)
+					}
+				}
+			}
+		}
+	} else {
+		log.Printf("INFO: Cost calculation deferred - will be calculated when job status becomes 'completed'")
 	}
 
 	// Build response

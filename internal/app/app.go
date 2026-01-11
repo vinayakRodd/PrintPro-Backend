@@ -111,18 +111,20 @@ func (a *Application) RegisterRoutes() {
 	os.MkdirAll(archiveDir, 0755)      // Create archive directory
 	os.MkdirAll(readyDir, 0755)        // Create ready directory (only files explicitly requested for printing)
 	os.MkdirAll(processingDir, 0755)  // Create processing directory
-	agentHandler := partner_agent.NewAgentHandler(testPrintDir, archiveDir, a.redisClient, a.repositories.PrintJobRepository)
+	agentHandler := partner_agent.NewAgentHandler(testPrintDir, archiveDir, a.redisClient, a.repositories.PrintJobRepository, a.repositories.JobCostRepository, a.services.CostCalculator)
 
 	// Initialize WebSocket hub and handler (must be before PrintHandler)
 	wsHub := websocket.NewHub()
 	wsHandler := websocket.NewWebSocketHandler(wsHub, a.redisClient)
 	
-	printHandler := print_handler.NewPrintHandler(testPrintDir, agentHandler, a.repositories.PartnerProfileRepository, a.repositories.PrintJobRepository, wsHub)
+	printHandler := print_handler.NewPrintHandler(testPrintDir, agentHandler, a.repositories.PartnerProfileRepository, a.repositories.PrintJobRepository, a.repositories.JobCostRepository, a.services.CostCalculator, wsHub)
 	uploadHandler := test_print.NewUploadHandler(
 		testPrintDir,
 		agentHandler,
 		a.repositories.PartnerProfileRepository,
 		a.repositories.PrintJobRepository,
+		a.repositories.JobCostRepository,
+		a.services.CostCalculator,
 	)
 
 	// Register test print routes
@@ -136,6 +138,7 @@ func (a *Application) RegisterRoutes() {
 	http.HandleFunc("/api/test-print/queue", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.QueueFile))))
 	http.HandleFunc("/api/test-print/preview", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.PreviewPDF))))
 	http.HandleFunc("/api/test-print/edit-options", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.EditPrintJobOptions))))
+	http.HandleFunc("/api/test-print/dashboard/overview", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.GetDashboardOverview))))
 
 	// Register partner agent routes (optional JWT auth - backward compatible with Python agent)
 	// No rate limiting for agent endpoints (internal communication)
