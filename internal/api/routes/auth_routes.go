@@ -11,7 +11,7 @@ import (
 // RegisterAuthRoutes registers all authentication-related routes
 func RegisterAuthRoutes(
 	authHandler *auth_handler.AuthHandler,
-	authRateLimiter *rate_limiter.RateLimiter,    // 10 req/min for login/signup endpoints
+	authRateLimiter *rate_limiter.RateLimiter,    // 100 req/min for login/signup endpoints
 	refreshRateLimiter *rate_limiter.RateLimiter, // 30 req/min for refresh endpoint
 	profileRateLimiter *rate_limiter.RateLimiter, // 150 req/min for profile/data endpoints
 	authMiddlewareFunc func(http.HandlerFunc) http.HandlerFunc,
