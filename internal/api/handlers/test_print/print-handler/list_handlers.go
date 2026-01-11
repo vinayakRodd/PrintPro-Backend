@@ -204,7 +204,7 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			"num_copies":                  job.NumCopies,
 			"p_type":                      job.PType,
 			"print_type":                  printType,
-			"crop_options":                job.CropOptions,
+			"crop_options":                job.PageOptions.CropOptions,
 			"page_options":                job.PageOptions,
 			"back_to_back":                job.BackToBack,
 			"delete_after_print":         job.DeleteAfterPrint,

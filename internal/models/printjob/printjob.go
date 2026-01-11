@@ -9,12 +9,13 @@ import (
 
 // PageOptions represents page selection options stored in JSONB
 type PageOptions struct {
-	TotalPages  *int    `json:"total_pages,omitempty"`  // Total number of pages in the document (calculated from file)
-	StartPage   *int    `json:"start_page,omitempty"`   // Starting page number (1-indexed, nil = from first page)
-	EndPage     *int    `json:"end_page,omitempty"`     // Ending page number (1-indexed, nil = to last page)
-	FilterType  *string `json:"filter_type,omitempty"`  // Page filter: "all" (default), "odd", "even"
-	SkipPages   []int   `json:"skip_pages,omitempty"`   // Array of page numbers (1-indexed) to skip
-	ColorPages  []int   `json:"color_pages,omitempty"`  // Array of page numbers (1-indexed) to print in color (individual_color_pages)
+	TotalPages  *int         `json:"total_pages,omitempty"`  // Total number of pages in the document (calculated from file)
+	StartPage   *int         `json:"start_page,omitempty"`   // Starting page number (1-indexed, nil = from first page)
+	EndPage     *int         `json:"end_page,omitempty"`     // Ending page number (1-indexed, nil = to last page)
+	FilterType  *string      `json:"filter_type,omitempty"`  // Page filter: "all" (default), "odd", "even"
+	SkipPages   []int        `json:"skip_pages,omitempty"`   // Array of page numbers (1-indexed) to skip
+	ColorPages  []int        `json:"color_pages,omitempty"`  // Array of page numbers (1-indexed) to print in color (individual_color_pages)
+	CropOptions *CropOptions `json:"crop_options,omitempty"` // Crop margins in millimeters (moved from separate column)
 }
 
 // CropOptions represents crop margins in millimeters stored in JSONB
@@ -90,8 +91,7 @@ type PrintJob struct {
 	PrintType *string   `db:"print_type" json:"print_type,omitempty"`    // Nullable - paper size (e.g., "A4", "Letter", "A3") - preferred field name
 	Color     *bool     `db:"color" json:"color,omitempty"`              // Nullable - color printing (default: false)
 	NumCopies *int      `db:"num_copies" json:"num_copies,omitempty"`    // Nullable - number of copies (default: 1)
-	PageOptions PageOptions `db:"page_options" json:"page_options,omitempty"` // Consolidated page selection options (JSONB)
-	CropOptions *CropOptions `db:"crop_options" json:"crop_options,omitempty"` // Crop margins in millimeters (JSONB)
+	PageOptions PageOptions `db:"page_options" json:"page_options,omitempty"` // Consolidated page selection options (JSONB) - includes crop_options
 	BackToBack *bool `db:"back_to_back" json:"back_to_back,omitempty"` // Nullable - true for duplex printing (both sides), false for simplex (one side)
 	DeleteAfterPrint *bool `db:"delete_after_print" json:"delete_after_print,omitempty"` // Nullable - if true, file will be hidden from partner listings after printing is completed
 	Status    *string   `db:"status" json:"status,omitempty"`            // Nullable - pending, processing, completed, failed, cancelled

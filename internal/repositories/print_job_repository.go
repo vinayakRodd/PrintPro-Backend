@@ -173,18 +173,16 @@ func scanJSONBArray(src interface{}) ([]int, error) {
 func (r *PrintJobRepository) GetByFilename(ctx context.Context, filename string) (*printjob.PrintJob, error) {
 	var job printjob.PrintJob
 	var pageOptsJSON interface{}
-	
-	var cropOptsJSON interface{}
 	var printType *string
 	
 	err := r.db.QueryRow(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, crop_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE filename = $1
 		 ORDER BY created_at DESC
 		 LIMIT 1`,
 		filename,
-	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &printType, &job.Color, &job.NumCopies, &pageOptsJSON, &cropOptsJSON, &job.BackToBack, &job.DeleteAfterPrint, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
+	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &printType, &job.Color, &job.NumCopies, &pageOptsJSON, &job.BackToBack, &job.DeleteAfterPrint, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
 	
 	// Set PrintType (prefer print_type over p_type)
 	if printType != nil {
@@ -192,20 +190,12 @@ func (r *PrintJobRepository) GetByFilename(ctx context.Context, filename string)
 	} else if job.PType != nil {
 		job.PrintType = job.PType
 	}
-	
-	// Parse crop_options JSONB
-	if cropOptsJSON != nil {
-		cropOpts, err := printjob.ScanCropOptions(cropOptsJSON)
-		if err == nil {
-			job.CropOptions = &cropOpts
-		}
-	}
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get print job by filename: %w", err)
 	}
 	
-	// Parse page_options JSONB
+	// Parse page_options JSONB (now includes crop_options)
 	job.PageOptions, err = printjob.ScanPageOptions(pageOptsJSON)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse page_options: %w", err)
@@ -252,12 +242,11 @@ func (r *PrintJobRepository) scanPrintJobRow(rows interface {
 }) (*printjob.PrintJob, error) {
 	var job printjob.PrintJob
 	var pageOptsJSON interface{}
-	var cropOptsJSON interface{}
 	var printType *string
 	
 	err := rows.Scan(
 		&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL,
-		&job.PType, &printType, &job.Color, &job.NumCopies, &pageOptsJSON, &cropOptsJSON, &job.BackToBack, &job.DeleteAfterPrint, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt,
+		&job.PType, &printType, &job.Color, &job.NumCopies, &pageOptsJSON, &job.BackToBack, &job.DeleteAfterPrint, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -271,19 +260,10 @@ func (r *PrintJobRepository) scanPrintJobRow(rows interface {
 		job.PrintType = job.PType
 	}
 	
-	// Parse page_options JSONB
+	// Parse page_options JSONB (now includes crop_options)
 	job.PageOptions, err = printjob.ScanPageOptions(pageOptsJSON)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse page_options: %w", err)
-	}
-	
-	// Parse crop_options JSONB
-	if cropOptsJSON != nil {
-		cropOpts, err := printjob.ScanCropOptions(cropOptsJSON)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse crop_options: %w", err)
-		}
-		job.CropOptions = &cropOpts
 	}
 
 	return &job, nil
@@ -299,7 +279,7 @@ func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64
 	// IMPORTANT: Only hide files when BOTH conditions are true: delete_after_print = true AND status = 'completed'
 	// Files with NULL status or other statuses should still be visible even if delete_after_print = true
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, crop_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE partner_id = $1::bigint AND partner_id IS NOT NULL
 		   AND NOT (delete_after_print = true AND COALESCE(status, '') = 'completed')
@@ -374,8 +354,8 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 	}
 	
 	// Handle page_options update - merge with existing page_options using PostgreSQL JSONB merge
-	// Check if any page-related fields are being updated
-	if startPage != nil || endPage != nil || pageFilterType != nil || individualColorPages != nil || skipPages != nil {
+	// Check if any page-related fields or crop_options are being updated
+	if startPage != nil || endPage != nil || pageFilterType != nil || individualColorPages != nil || skipPages != nil || cropOptions != nil {
 		// Build partial page_options JSONB object with only the fields being updated
 		partialPageOpts := make(map[string]interface{})
 		
@@ -401,6 +381,10 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 			} else {
 				partialPageOpts["skip_pages"] = *skipPages
 			}
+		}
+		// Include crop_options in page_options
+		if cropOptions != nil {
+			partialPageOpts["crop_options"] = cropOptions
 		}
 		
 		// Marshal partial page_options to JSONB
@@ -436,17 +420,6 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 	if printType != nil {
 		updates = append(updates, fmt.Sprintf("p_type = $%d", argIndex))
 		args = append(args, *printType)
-		argIndex++
-	}
-	
-	// Handle crop_options update
-	if cropOptions != nil {
-		cropOptsJSON, err := json.Marshal(cropOptions)
-		if err != nil {
-			return fmt.Errorf("failed to marshal crop_options: %w", err)
-		}
-		updates = append(updates, fmt.Sprintf("crop_options = $%d::jsonb", argIndex))
-		args = append(args, string(cropOptsJSON))
 		argIndex++
 	}
 	
@@ -501,7 +474,7 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 // GetByAccountID retrieves all print jobs for a specific customer (account_id)
 func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, crop_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE account_id = $1
 		 ORDER BY created_at DESC`,
@@ -533,7 +506,7 @@ func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64
 // Excludes completed files from the results
 func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, accountID int64, partnerID int64) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, crop_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
+		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE account_id = $1 AND partner_id = $2 AND partner_id IS NOT NULL AND (status IS NULL OR status != 'completed')
 		 ORDER BY created_at DESC`,
