@@ -14,6 +14,7 @@ type Repositories struct {
 	PrinterRepository         *repositories.PrinterRepository
 	PrintJobRepository        *repositories.PrintJobRepository
 	ShopPreferenceRepository  *repositories.ShopPreferenceRepository
+	JobCostRepository         *repositories.JobCostRepository
 }
 
 // setupRepositories initializes all repositories
@@ -26,6 +27,7 @@ func setupRepositories(postgresClient *infrastructure.PostgresClient) *Repositor
 		PrinterRepository:         repositories.NewPrinterRepository(postgresClient.GetPool()),
 		PrintJobRepository:        repositories.NewPrintJobRepository(postgresClient.GetPool()),
 		ShopPreferenceRepository:  repositories.NewShopPreferenceRepository(postgresClient.GetPool()),
+		JobCostRepository:         repositories.NewJobCostRepository(postgresClient.GetPool()),
 	}
 }
 

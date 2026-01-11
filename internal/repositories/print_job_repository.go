@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"print-pro-backend/internal/models/printjob"
 	"time"
@@ -583,3 +584,59 @@ func (r *PrintJobRepository) DeleteByFilenameAndAccountID(ctx context.Context, f
 	return nil
 }
 
+// GetDashboardStats returns dashboard statistics for a partner
+// Revenue is calculated only from job_cost table (only completed jobs have entries in job_cost)
+func (r *PrintJobRepository) GetDashboardStats(ctx context.Context, partnerID int64) (totalOrders, pendingOrders, completed int, totalRevenue float64, err error) {
+	query := `
+		SELECT 
+			COUNT(*) as total_orders,
+			COUNT(*) FILTER (WHERE status IS NULL OR status = 'pending' OR status = 'ready') as pending_orders,
+			COUNT(*) FILTER (WHERE status = 'completed') as completed,
+			COALESCE(SUM(jc.total_cost), 0) as total_revenue
+		FROM print_jobs pj
+		LEFT JOIN job_cost jc ON pj.id = jc.print_job_id
+		WHERE pj.partner_id = $1::bigint AND pj.partner_id IS NOT NULL
+	`
+
+	var revenueStr string
+	err = r.db.QueryRow(ctx, query, partnerID).Scan(
+		&totalOrders,
+		&pendingOrders,
+		&completed,
+		&revenueStr,
+	)
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("failed to get dashboard stats: %w", err)
+	}
+
+	// Parse total_revenue (stored as string in database)
+	if revenueStr != "" {
+		parsed, parseErr := strconv.ParseFloat(revenueStr, 64)
+		if parseErr == nil {
+			totalRevenue = parsed
+		}
+	}
+
+	return totalOrders, pendingOrders, completed, totalRevenue, nil
+}
+// UpdatePageOptionsWithJSON updates page_options by merging the provided JSON with existing page_options
+func (r *PrintJobRepository) UpdatePageOptionsWithJSON(ctx context.Context, filename string, partnerID int64, pageOptsJSON string) error {
+	query := `
+		UPDATE print_jobs 
+		SET page_options = COALESCE(page_options, '{}'::jsonb) || $1::jsonb,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE filename = $2 AND partner_id = $3::bigint
+	`
+	
+	result, err := r.db.Exec(ctx, query, pageOptsJSON, filename, partnerID)
+	if err != nil {
+		return fmt.Errorf("failed to update page_options: %w", err)
+	}
+	
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("print job not found or does not belong to this partner")
+	}
+	
+	return nil
+}

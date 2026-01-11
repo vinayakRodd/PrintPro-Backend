@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 	"print-pro-backend/internal/infrastructure"
+	"print-pro-backend/internal/models/jobcost"
 	"print-pro-backend/internal/models/printjob"
 )
 
@@ -28,6 +29,17 @@ type PrintJobRepository interface {
 	UpdateStatus(ctx context.Context, filename, status string) error
 }
 
+// JobCostRepository interface for job cost operations
+type JobCostRepository interface {
+	CreateOrUpdate(ctx context.Context, printJobID int64, cost *jobcost.JobCost) error
+	UpdateTotalCostInPrintJob(ctx context.Context, printJobID int64, totalCost float64) error
+}
+
+// CostCalculator interface for cost calculation
+type CostCalculator interface {
+	CalculateCost(filePath string, pageOptions printjob.PageOptions, color *bool, numCopies *int, individualColorPages []int) (*jobcost.JobCost, error)
+}
+
 // AgentHandler handles requests from partner agent
 type AgentHandler struct {
 	readyDir       string  // Only files explicitly requested for printing go here
@@ -37,10 +49,12 @@ type AgentHandler struct {
 	syncedPrinters []map[string]interface{}
 	printerMutex   sync.RWMutex
 	printJobRepo   PrintJobRepository
+	jobCostRepo    JobCostRepository
+	costCalculator CostCalculator
 }
 
 // NewAgentHandler creates a new agent handler
-func NewAgentHandler(baseDir, archiveDir string, redisClient *infrastructure.RedisClient, printJobRepo PrintJobRepository) *AgentHandler {
+func NewAgentHandler(baseDir, archiveDir string, redisClient *infrastructure.RedisClient, printJobRepo PrintJobRepository, jobCostRepo JobCostRepository, costCalculator CostCalculator) *AgentHandler {
 	readyDir := filepath.Join(baseDir, "ready")
 	processingDir := filepath.Join(baseDir, "processing")
 	return &AgentHandler{
@@ -50,5 +64,7 @@ func NewAgentHandler(baseDir, archiveDir string, redisClient *infrastructure.Red
 		redisClient:    redisClient,
 		syncedPrinters: make([]map[string]interface{}, 0),
 		printJobRepo:   printJobRepo,
+		jobCostRepo:    jobCostRepo,
+		costCalculator: costCalculator,
 	}
 }

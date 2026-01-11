@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
+	"print-pro-backend/internal/models/jobcost"
 	"print-pro-backend/internal/models/printjob"
 	"print-pro-backend/internal/repositories"
 	"strconv"
@@ -23,7 +24,12 @@ type UploadHandler struct {
 		QueueJobForAgent(sourceFilePath string) error
 	}
 	partnerProfileRepository *repositories.PartnerProfileRepository
-	printJobRepository       *repositories.PrintJobRepository
+	printJobRepository      *repositories.PrintJobRepository
+	jobCostRepository       *repositories.JobCostRepository
+	costCalculator          interface {
+		CalculateCost(filePath string, pageOptions printjob.PageOptions, color *bool, numCopies *int, individualColorPages []int) (*jobcost.JobCost, error)
+		CountPagesInFile(filePath string) (int, error)
+	}
 }
 
 // NewUploadHandler creates a new upload handler
@@ -34,12 +40,19 @@ func NewUploadHandler(
 	},
 	partnerProfileRepository *repositories.PartnerProfileRepository,
 	printJobRepository *repositories.PrintJobRepository,
+	jobCostRepository *repositories.JobCostRepository,
+	costCalculator interface {
+		CalculateCost(filePath string, pageOptions printjob.PageOptions, color *bool, numCopies *int, individualColorPages []int) (*jobcost.JobCost, error)
+		CountPagesInFile(filePath string) (int, error)
+	},
 ) *UploadHandler {
 	return &UploadHandler{
 		uploadDir:                uploadDir,
 		agentHandler:             agentHandler,
 		partnerProfileRepository: partnerProfileRepository,
 		printJobRepository:       printJobRepository,
+		jobCostRepository:        jobCostRepository,
+		costCalculator:           costCalculator,
 	}
 }
 
@@ -410,6 +423,39 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				log.Printf("WARNING: Failed to update print_type/crop_options for print job - %v", err)
 			}
+		}
+		
+		// Calculate and store cost
+		if h.costCalculator != nil && h.jobCostRepository != nil {
+			// First, count total pages in the file
+			totalPages, err := h.costCalculator.CountPagesInFile(finalFilePath)
+			if err != nil {
+				log.Printf("WARNING: Failed to count pages in file - %v", err)
+				totalPages = 0
+			} else {
+				log.Printf("Counted total pages: %d for file: %s", totalPages, filename)
+			}
+			
+			// Update page_options in database with total_pages using JSONB merge
+			if totalPages > 0 {
+				// Create a partial page_options JSON with just total_pages
+				totalPagesOpts := map[string]interface{}{
+					"total_pages": totalPages,
+				}
+				totalPagesJSON, _ := json.Marshal(totalPagesOpts)
+				
+				// Use direct SQL update to merge total_pages into page_options
+				updateErr := h.printJobRepository.UpdatePageOptionsWithJSON(ctx, filename, partnerID, string(totalPagesJSON))
+				if updateErr != nil {
+					log.Printf("WARNING: Failed to update page_options with total_pages - %v", updateErr)
+				} else {
+					log.Printf("Updated page_options with total_pages: %d", totalPages)
+				}
+			}
+			
+			// NOTE: Cost calculation and storage is deferred until job status becomes "completed"
+			// This ensures we only store the final cost after successful printing
+			log.Printf("INFO: Total pages counted: %d - Cost will be calculated when job is completed", totalPages)
 		}
 		
 		log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s (account_id: %v), Shop: %s (partner_id: %d), File: %s, PType: %v, PrintType: %v, Color: %v, NumCopies: %v, PageOptions: %+v, CropOptions: %+v", 
