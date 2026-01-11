@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
+	"print-pro-backend/internal/models/printjob"
 	"print-pro-backend/internal/repositories"
 	"strconv"
 	"strings"
@@ -105,6 +106,41 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	var pTypePtr *string
 	if pType != "" {
 		pTypePtr = &pType
+	}
+
+	// Parse print_type (paper size) - preferred over p_type
+	printTypeStr := strings.TrimSpace(r.FormValue("print_type"))
+	var printTypePtr *string
+	if printTypeStr != "" {
+		// Validate and normalize paper size
+		validated := printjob.ValidatePaperSize(printTypeStr)
+		printTypePtr = &validated
+	} else if pType != "" {
+		// Fallback to p_type if print_type not provided
+		validated := printjob.ValidatePaperSize(pType)
+		printTypePtr = &validated
+	}
+
+	// Parse crop_options (JSON string)
+	cropOptionsStr := strings.TrimSpace(r.FormValue("crop_options"))
+	var cropOptionsPtr *printjob.CropOptions
+	if cropOptionsStr != "" {
+		var cropOpts printjob.CropOptions
+		if err := json.Unmarshal([]byte(cropOptionsStr), &cropOpts); err != nil {
+			log.Printf("WARNING: Invalid crop_options JSON '%s' - %v, ignoring", cropOptionsStr, err)
+		} else {
+			// Validate crop options against paper size
+			paperSize := printjob.PaperSizeDefault
+			if printTypePtr != nil {
+				paperSize = *printTypePtr
+			}
+			validated, err := printjob.ValidateCropOptions(&cropOpts, paperSize)
+			if err != nil {
+				log.Printf("WARNING: Invalid crop_options - %v, ignoring", err)
+			} else {
+				cropOptionsPtr = validated
+			}
+		}
 	}
 
 	// Parse color (default: false)
@@ -368,8 +404,16 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			log.Printf("ERROR: SECURITY ISSUE - Print job created with wrong partner_id! Expected: %d, Got: %d, File: %s", 
 				partnerID, printJob.PartnerID, filename)
 		}
-		log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s (account_id: %v), Shop: %s (partner_id: %d), File: %s, PType: %v, Color: %v, NumCopies: %v, PageOptions: %+v", 
-			printJob.ID, user.ID, printJob.AccountID, shopName, printJob.PartnerID, filename, printJob.PType, printJob.Color, printJob.NumCopies, printJob.PageOptions)
+		// Update print_type and crop_options if provided (Create method doesn't support them yet)
+		if printTypePtr != nil || cropOptionsPtr != nil {
+			err = h.printJobRepository.UpdatePrintOptions(ctx, filename, partnerID, accountIDPtr, nil, nil, nil, nil, nil, nil, nil, nil, nil, printTypePtr, cropOptionsPtr)
+			if err != nil {
+				log.Printf("WARNING: Failed to update print_type/crop_options for print job - %v", err)
+			}
+		}
+		
+		log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s (account_id: %v), Shop: %s (partner_id: %d), File: %s, PType: %v, PrintType: %v, Color: %v, NumCopies: %v, PageOptions: %+v, CropOptions: %+v", 
+			printJob.ID, user.ID, printJob.AccountID, shopName, printJob.PartnerID, filename, printJob.PType, printTypePtr, printJob.Color, printJob.NumCopies, printJob.PageOptions, cropOptionsPtr)
 	}
 
 	log.Printf("SUCCESS: File uploaded - Customer: %s, Shop: %s, File: %s, Size: %d bytes", 

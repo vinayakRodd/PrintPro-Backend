@@ -122,6 +122,14 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 		// Determine status based on Redis queues and database status
 		status := getStatus(job.Status, processingQueueMap[job.Filename], readyQueueMap[job.Filename])
 
+		// Get print_type (prefer PrintType over PType)
+		var printType *string
+		if job.PrintType != nil {
+			printType = job.PrintType
+		} else if job.PType != nil {
+			printType = job.PType
+		}
+		
 		fileList = append(fileList, map[string]interface{}{
 			"id":                          job.ID,
 			"filename":                    job.Filename,
@@ -133,6 +141,8 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 			"color":                       job.Color,
 			"num_copies":                  job.NumCopies,
 			"p_type":                      job.PType,
+			"print_type":                  printType,
+			"crop_options":                job.CropOptions,
 			"page_options":                job.PageOptions,
 			"back_to_back":                job.BackToBack,
 			"delete_after_print":         job.DeleteAfterPrint,

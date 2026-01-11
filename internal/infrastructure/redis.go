@@ -85,6 +85,11 @@ func (r *RedisClient) LPUSH(ctx context.Context, key string, value interface{}) 
 	return r.client.LPush(ctx, key, value).Err()
 }
 
+// RPUSH pushes a value to the right (tail) of a list
+func (r *RedisClient) RPUSH(ctx context.Context, key string, value interface{}) error {
+	return r.client.RPush(ctx, key, value).Err()
+}
+
 // RPOPLPUSH atomically moves an element from the tail of source list to the head of destination list
 // Returns the element that was moved, or empty string if source list is empty
 func (r *RedisClient) RPOPLPUSH(ctx context.Context, source, destination string) (string, error) {

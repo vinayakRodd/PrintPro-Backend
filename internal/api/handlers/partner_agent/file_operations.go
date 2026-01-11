@@ -93,6 +93,7 @@ func (h *AgentHandler) MoveToProcessing(filename string) error {
 
 	// Ensure filename is in Redis ready queue
 	if h.redisClient == nil {
+		log.Printf("ERROR: Redis client is nil - cannot queue file: %s", filename)
 		return fmt.Errorf("Redis client is not available - cannot queue file")
 	}
 
@@ -101,12 +102,20 @@ func (h *AgentHandler) MoveToProcessing(filename string) error {
 	
 	// OPTIMIZATION: Just push to Redis - no duplicate check (saves LRANGE operation)
 	// Redis list can have duplicates, and agent will handle it via RPOPLPUSH
+	// Use LPUSH to add to head - RPOPLPUSH removes from tail, so this creates FIFO queue (oldest first)
 	if err := h.redisClient.LPUSH(ctx, queueKey, filename); err != nil {
-		log.Printf("ERROR: Failed to push filename to Redis queue: %v", err)
+		log.Printf("ERROR: Failed to push filename to Redis queue '%s': %v - File: %s", queueKey, err, filename)
 		return fmt.Errorf("failed to queue file in Redis: %v", err)
 	}
 	
-	log.Printf("INFO: Filename successfully pushed to Redis ready queue - File: %s", filename)
+	// Verify the file was added to the queue (helps debug Redis connection issues)
+	queueLength, err := h.redisClient.LLEN(ctx, queueKey)
+	if err != nil {
+		log.Printf("WARNING: Failed to verify queue length after adding file: %v", err)
+	} else {
+		log.Printf("INFO: Filename successfully pushed to Redis ready queue - File: %s, Queue length: %d", filename, queueLength)
+	}
+	
 	return nil
 }
 

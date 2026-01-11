@@ -15,6 +15,8 @@ type EditPrintJobOptionsRequest struct {
 	Filename   string `json:"filename" binding:"required"`
 	Color      *bool   `json:"color,omitempty"`      // Optional: true for color, false for B&W
 	NumCopies  *int    `json:"num_copies,omitempty"` // Optional: number of copies
+	PrintType  *string `json:"print_type,omitempty"` // Optional: paper size (e.g., "A4", "Letter")
+	CropOptions *printjob.CropOptions `json:"crop_options,omitempty"` // Optional: crop margins in millimeters
 	BackToBack *bool `json:"back_to_back,omitempty"` // Optional: true for duplex printing (both sides), false for simplex (one side)
 	DeleteAfterPrint *bool `json:"delete_after_print,omitempty"` // Optional: if true, file will be hidden from partner listings after printing is completed
 	PageOptions *printjob.PageOptions `json:"page_options,omitempty"` // Optional: Consolidated page options structure
@@ -204,7 +206,36 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	
-	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPagesPtr, skipPagesPtr, req.BackToBack, req.DeleteAfterPrint)
+	// Validate and normalize print_type if provided
+	var validatedPrintType *string
+	if req.PrintType != nil {
+		validated := printjob.ValidatePaperSize(*req.PrintType)
+		validatedPrintType = &validated
+	}
+	
+	// Validate crop_options if provided
+	var validatedCropOptions *printjob.CropOptions
+	if req.CropOptions != nil {
+		// Get paper size for validation (use validated print_type or existing job's print_type)
+		paperSize := printjob.PaperSizeDefault
+		if validatedPrintType != nil {
+			paperSize = *validatedPrintType
+		} else if printJob.PrintType != nil {
+			paperSize = *printJob.PrintType
+		} else if printJob.PType != nil {
+			paperSize = *printJob.PType
+		}
+		
+		validated, err := printjob.ValidateCropOptions(req.CropOptions, paperSize)
+		if err != nil {
+			log.Printf("ERROR: Invalid crop_options - %v", err)
+			h.sendErrorResponse(w, http.StatusBadRequest, "Invalid crop options", err.Error())
+			return
+		}
+		validatedCropOptions = validated
+	}
+	
+	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPagesPtr, skipPagesPtr, req.BackToBack, req.DeleteAfterPrint, validatedPrintType, validatedCropOptions)
 	if err != nil {
 		log.Printf("ERROR: Failed to update print job options for '%s' - %v", req.Filename, err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to update print job options")
@@ -229,6 +260,16 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 	if updatedJob != nil {
 		response["color"] = updatedJob.Color
 		response["num_copies"] = updatedJob.NumCopies
+		// Include print_type (prefer PrintType over PType)
+		if updatedJob.PrintType != nil {
+			response["print_type"] = *updatedJob.PrintType
+		} else if updatedJob.PType != nil {
+			response["print_type"] = *updatedJob.PType
+		}
+		// Include crop_options
+		if updatedJob.CropOptions != nil {
+			response["crop_options"] = updatedJob.CropOptions
+		}
 		// Always include page_options (even if empty) - matches list API format
 		// Log what we're about to return
 		log.Printf("DEBUG: Updated job PageOptions - StartPage: %v, EndPage: %v, FilterType: %v, SkipPages: %v, ColorPages: %v",
