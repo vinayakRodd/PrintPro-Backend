@@ -1,6 +1,7 @@
 package session_handlers
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
@@ -53,7 +54,7 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	
 	// Fallback to cookie (for web frontend)
 	if refreshToken == "" {
-		cookie, err := r.Cookie("refresh_token")
+	cookie, err := r.Cookie("refresh_token")
 		if err == nil && cookie.Value != "" {
 			refreshToken = cookie.Value
 			log.Printf("🔍 REFRESH: Refresh token found in cookie, validating...")
@@ -65,7 +66,7 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Refresh token not found")
 		return
 	}
-	
+
 	// SECURITY NOTE: refreshToken variable contains sensitive data - never log it
 
 	// Validate refresh token JWT
@@ -95,7 +96,15 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 			log.Printf("❌ REFRESH: Refresh token is not the active session for partner - invalidating")
 			// Invalidate the token being used (it's not the active one)
 			h.sessionService.DeleteRefreshToken(ctx, refreshToken)
-			sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Session has been invalidated. Please login again.")
+			// Send specific error message for frontend to display
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": "Session expired",
+				"error":   "You have been logged out because you logged in from another device. Please login again.",
+				"code":    "SESSION_INVALIDATED_ANOTHER_DEVICE",
+			})
 			return
 		}
 		log.Printf("✅ REFRESH: Refresh token is the active partner session")
