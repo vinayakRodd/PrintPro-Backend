@@ -317,10 +317,7 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		} else if updatedJob.PType != nil {
 			response["print_type"] = *updatedJob.PType
 		}
-		// Include crop_options
-		if updatedJob.CropOptions != nil {
-			response["crop_options"] = updatedJob.CropOptions
-		}
+		// crop_options is now included in page_options
 		// Always include page_options (even if empty) - matches list API format
 		// Log what we're about to return
 		log.Printf("DEBUG: Updated job PageOptions - StartPage: %v, EndPage: %v, FilterType: %v, SkipPages: %v, ColorPages: %v",

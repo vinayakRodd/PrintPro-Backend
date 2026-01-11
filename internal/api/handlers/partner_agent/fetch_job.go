@@ -131,9 +131,9 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 			} else if printJob.PType != nil {
 				printTypeValue = printJob.PType
 			}
-			// Get crop_options
-			if printJob.CropOptions != nil {
-				cropOptionsValue = printJob.CropOptions
+			// Get crop_options from page_options
+			if printJob.PageOptions.CropOptions != nil {
+				cropOptionsValue = printJob.PageOptions.CropOptions
 			}
 			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v, SkipPages: %v, BackToBack: %v, PrintType: %v, CropOptions: %+v", 
 				fileName, colorValue, numCopiesValue, startPageValue, endPageValue, pageFilterTypeValue, individualColorPagesValue, skipPagesValue, backToBackValue, printTypeValue, cropOptionsValue)
