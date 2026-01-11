@@ -87,6 +87,20 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	}
 	log.Printf("✅ REFRESH: Refresh token found in Redis (not revoked)")
 
+	// SINGLE SESSION POLICY: For partners, verify this is the active session
+	if claims.UserType == "partner" {
+		log.Printf("🔒 REFRESH: Partner refresh detected - verifying single session policy")
+		activeRefreshToken, err := h.sessionService.GetPartnerActiveRefreshToken(ctx, claims.UserID)
+		if err != nil || activeRefreshToken != refreshToken {
+			log.Printf("❌ REFRESH: Refresh token is not the active session for partner - invalidating")
+			// Invalidate the token being used (it's not the active one)
+			h.sessionService.DeleteRefreshToken(ctx, refreshToken)
+			sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Session has been invalidated. Please login again.")
+			return
+		}
+		log.Printf("✅ REFRESH: Refresh token is the active partner session")
+	}
+
 	// TOKEN ROTATION: Invalidate old refresh token and generate new one
 	log.Printf("🔄 REFRESH: Rotating refresh token (invalidating old, generating new)")
 	
@@ -122,6 +136,17 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		return
 	}
 	log.Printf("✅ REFRESH: New refresh token stored in Redis")
+
+	// SINGLE SESSION POLICY: For partners, update the active session mapping
+	if claims.UserType == "partner" {
+		log.Printf("💾 REFRESH: Updating active partner session")
+		if err := h.sessionService.SetPartnerActiveRefreshToken(ctx, claims.UserID, newRefreshToken); err != nil {
+			log.Printf("ERROR: Failed to update active partner session: %v", err)
+			sendErrorResponse(w, http.StatusInternalServerError, "Failed to update session", err.Error())
+			return
+		}
+		log.Printf("✅ REFRESH: Active partner session updated successfully")
+	}
 
 	// Set new refresh token cookie (TOKEN ROTATION)
 	refreshCookie := &http.Cookie{
