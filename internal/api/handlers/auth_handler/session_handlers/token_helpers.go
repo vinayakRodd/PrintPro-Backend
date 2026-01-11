@@ -29,6 +29,17 @@ func NewTokenHelper(jwtService *jwt.JWTService, sessionService *session.SessionS
 // Returns accessToken and refreshToken, or error if generation fails
 // SECURITY: Never log the actual token values - only log status messages
 func (h *TokenHelper) GenerateTokensAndSetCookies(w http.ResponseWriter, userID, email, userType string, ctx context.Context) (string, string, error) {
+	// SINGLE SESSION POLICY: For partners, invalidate any existing session
+	if userType == "partner" {
+		log.Printf("🔒 Partner login detected - invalidating existing sessions for single session policy")
+		if err := h.sessionService.InvalidatePartnerSession(ctx, userID); err != nil {
+			log.Printf("WARNING: Failed to invalidate existing partner session: %v", err)
+			// Continue anyway - might be first login
+		} else {
+			log.Printf("✅ Existing partner session invalidated successfully")
+		}
+	}
+
 	// Generate JWT access token (15 minutes expiry)
 	log.Printf("🔑 Generating access token (expires in 15 minutes) for %s: %s", userType, userID)
 	accessToken, err := h.jwtService.GenerateAccessToken(userID, email, userType)
@@ -56,6 +67,16 @@ func (h *TokenHelper) GenerateTokensAndSetCookies(w http.ResponseWriter, userID,
 		return "", "", err
 	}
 	log.Printf("✅ Refresh token stored in Redis successfully")
+
+	// SINGLE SESSION POLICY: For partners, track the active refresh token
+	if userType == "partner" {
+		log.Printf("💾 Setting active partner session")
+		if err := h.sessionService.SetPartnerActiveRefreshToken(ctx, userID, refreshToken); err != nil {
+			log.Printf("ERROR: Failed to set active partner session: %v", err)
+			return "", "", err
+		}
+		log.Printf("✅ Active partner session set successfully")
+	}
 
 	// Set secure HTTP-only cookie for refresh token
 	refreshCookie := &http.Cookie{

@@ -113,3 +113,40 @@ func (s *SessionService) RefreshSession(ctx context.Context, token string) error
 	return s.redisClient.Set(ctx, sessionKey, data, s.sessionTTL)
 }
 
+// GetPartnerActiveRefreshToken gets the current active refresh token for a partner user
+func (s *SessionService) GetPartnerActiveRefreshToken(ctx context.Context, userID string) (string, error) {
+	partnerSessionKey := fmt.Sprintf("partner_session:%s", userID)
+	refreshToken, err := s.redisClient.Get(ctx, partnerSessionKey)
+	if err != nil {
+		return "", fmt.Errorf("no active session found")
+	}
+	return refreshToken, nil
+}
+
+// SetPartnerActiveRefreshToken sets the current active refresh token for a partner user
+func (s *SessionService) SetPartnerActiveRefreshToken(ctx context.Context, userID, refreshToken string) error {
+	partnerSessionKey := fmt.Sprintf("partner_session:%s", userID)
+	return s.redisClient.Set(ctx, partnerSessionKey, refreshToken, s.sessionTTL)
+}
+
+// InvalidatePartnerSession invalidates the current active session for a partner user
+// This deletes both the partner_session mapping and the refresh_token entry
+func (s *SessionService) InvalidatePartnerSession(ctx context.Context, userID string) error {
+	partnerSessionKey := fmt.Sprintf("partner_session:%s", userID)
+	
+	// Get the current active refresh token
+	oldRefreshToken, err := s.redisClient.Get(ctx, partnerSessionKey)
+	if err != nil {
+		// No active session exists, nothing to invalidate
+		return nil
+	}
+	
+	// Delete the refresh token entry
+	refreshTokenKey := fmt.Sprintf("refresh_token:%s", oldRefreshToken)
+	if err := s.redisClient.Delete(ctx, refreshTokenKey); err != nil {
+		// Log but don't fail - token might have already expired
+	}
+	
+	// Delete the partner session mapping
+	return s.redisClient.Delete(ctx, partnerSessionKey)
+}
