@@ -40,6 +40,7 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	// Get refresh token from cookie OR Authorization header (for Go agent)
 	// SECURITY: Never log the actual token value - only log status messages
 	var refreshToken string
+	var isGoAgent bool // Track if request is from Go agent (needs refresh_token in response)
 	ctx := r.Context()
 	
 	// Try Authorization header first (for Go agent)
@@ -48,16 +49,18 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		parts := strings.Split(authHeader, " ")
 		if len(parts) == 2 && parts[0] == "Bearer" {
 			refreshToken = parts[1]
-			log.Printf("🔍 REFRESH: Refresh token found in Authorization header, validating...")
+			isGoAgent = true // Go agent sends refresh token in Authorization header
+			log.Printf("🔍 REFRESH: Refresh token found in Authorization header (Go agent), validating...")
 		}
 	}
 	
 	// Fallback to cookie (for web frontend)
 	if refreshToken == "" {
-	cookie, err := r.Cookie("refresh_token")
+		cookie, err := r.Cookie("refresh_token")
 		if err == nil && cookie.Value != "" {
 			refreshToken = cookie.Value
-			log.Printf("🔍 REFRESH: Refresh token found in cookie, validating...")
+			isGoAgent = false // Web frontend uses cookie, refresh_token should NOT be in response body
+			log.Printf("🔍 REFRESH: Refresh token found in cookie (web frontend), validating...")
 		}
 	}
 	
@@ -180,12 +183,23 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	log.Printf("🎉 REFRESH: Token refresh completed with rotation - user can continue without re-login")
 	// SECURITY NOTE: newAccessToken and newRefreshToken contain sensitive data - never log them, only return in response
 
-	// Return new access token and new refresh token (for Go agent compatibility)
-	sendJSONResponse(w, http.StatusOK, map[string]interface{}{
-		"success":       true,
-		"access_token":  newAccessToken,
-		"refresh_token": newRefreshToken, // New rotated refresh token
-		"message":       "Access token refreshed successfully",
-	})
+	// Build response - only include refresh_token in response body for Go agent
+	// SECURITY: Web frontend gets refresh_token in HttpOnly cookie only (not in response body)
+	response := map[string]interface{}{
+		"success":      true,
+		"access_token": newAccessToken,
+		"message":      "Access token refreshed successfully",
+	}
+	
+	// Only include refresh_token in response body for Go agent (Authorization header)
+	// Web frontend gets it in HttpOnly cookie only (more secure - prevents XSS exposure)
+	if isGoAgent {
+		response["refresh_token"] = newRefreshToken
+		log.Printf("🔐 REFRESH: Including refresh_token in response body for Go agent")
+	} else {
+		log.Printf("🔐 REFRESH: Refresh_token NOT in response body (web frontend - it's in HttpOnly cookie only)")
+	}
+	
+	sendJSONResponse(w, http.StatusOK, response)
 }
 
