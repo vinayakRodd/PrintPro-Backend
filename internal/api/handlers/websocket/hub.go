@@ -19,6 +19,7 @@ type Connection struct {
 	printerID string
 	send      chan []byte
 	hub       *Hub
+	writeMu   sync.Mutex // Mutex to serialize writes to WebSocket (prevents concurrent write panics)
 }
 
 // NewHub creates a new Hub instance

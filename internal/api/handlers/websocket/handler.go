@@ -35,6 +35,14 @@ func NewWebSocketHandler(hub *Hub, redisClient *infrastructure.RedisClient) *Web
 
 // HandleWebSocket handles WebSocket connections at /ws/{printer_id}
 func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+	// CRITICAL: Add panic recovery to prevent server crash
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("CRITICAL: Recovered from panic in HandleWebSocket: %v", r)
+			// Server continues running - connection is just closed
+		}
+	}()
+
 	// Extract printer_id from URL path
 	path := r.URL.Path
 	if len(path) <= 4 || path[:4] != "/ws/" {
@@ -62,6 +70,12 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	// Register connection in hub
 	connection := h.hub.Register(printerID, conn)
 	defer func() {
+		// CRITICAL: Add panic recovery in defer to prevent server crash
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("CRITICAL: Recovered from panic while closing connection for printer_id %s: %v", printerID, r)
+			}
+		}()
 		h.hub.Unregister(printerID)
 		conn.Close()
 		log.Printf("INFO: WebSocket connection closed for printer_id: '%s'", printerID)
@@ -89,56 +103,50 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	// Set initial read deadline (expect Pong within 25 seconds)
 	conn.SetReadDeadline(time.Now().Add(25 * time.Second))
 
-	// Start goroutine to send Ping messages every 20 seconds
-	go h.pingLoop(connection, redisKey)
-
-	// Start goroutine to write messages
+	// Start goroutine to write messages (includes ping/pong)
 	go h.writePump(connection)
 
 	// Read messages (blocking)
 	h.readPump(connection, redisKey)
 }
 
-// pingLoop sends Ping messages every 20 seconds
-func (h *WebSocketHandler) pingLoop(conn *Connection, redisKey string) {
-	ticker := time.NewTicker(20 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			conn.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := conn.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				log.Printf("ERROR: Failed to send Ping to printer_id %s: %v", conn.printerID, err)
-				return
-			}
-			log.Printf("DEBUG: Ping sent to printer_id: '%s'", conn.printerID)
-		}
-	}
-}
+// pingLoop is removed - ping is now handled in writePump to avoid concurrent writes
 
 // writePump writes messages from the send channel to the WebSocket connection
+// CRITICAL: This is the ONLY place that writes to the WebSocket to prevent concurrent write panics
 func (h *WebSocketHandler) writePump(conn *Connection) {
-	ticker := time.NewTicker(54 * time.Second)
+	// Ping ticker (20 seconds) - consolidated here to avoid concurrent writes
+	pingTicker := time.NewTicker(20 * time.Second)
+	defer pingTicker.Stop()
+
+	// CRITICAL: Add panic recovery to prevent server crash
 	defer func() {
-		ticker.Stop()
+		if r := recover(); r != nil {
+			log.Printf("CRITICAL: Recovered from panic in writePump for printer_id %s: %v", conn.printerID, r)
+		}
+		// Close connection safely with mutex
+		conn.writeMu.Lock()
+		defer conn.writeMu.Unlock()
 		conn.conn.Close()
 	}()
 
 	for {
 		select {
 		case message, ok := <-conn.send:
-			log.Printf("DEBUG: writePump received message for printer_id: '%s', length: %d", conn.printerID, len(message))
+			// CRITICAL: Use mutex to serialize all writes
+			conn.writeMu.Lock()
 			conn.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
 				log.Printf("DEBUG: Send channel closed for printer_id: '%s'", conn.printerID)
 				conn.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				conn.writeMu.Unlock()
 				return
 			}
 
 			w, err := conn.conn.NextWriter(websocket.TextMessage)
 			if err != nil {
 				log.Printf("ERROR: Failed to get NextWriter for printer_id %s: %v", conn.printerID, err)
+				conn.writeMu.Unlock()
 				return
 			}
 			n, writeErr := w.Write(message)
@@ -156,22 +164,33 @@ func (h *WebSocketHandler) writePump(conn *Connection) {
 			}
 
 			if err := w.Close(); err != nil {
+				conn.writeMu.Unlock()
 				return
 			}
-		case <-ticker.C:
-			// Send ping to keep connection alive
+			conn.writeMu.Unlock()
+
+		case <-pingTicker.C:
+			// CRITICAL: Use mutex to serialize ping writes
+			conn.writeMu.Lock()
 			conn.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				log.Printf("ERROR: Failed to send Ping to printer_id %s: %v", conn.printerID, err)
+				conn.writeMu.Unlock()
 				return
 			}
+			log.Printf("DEBUG: Ping sent to printer_id: '%s'", conn.printerID)
+			conn.writeMu.Unlock()
 		}
 	}
 }
 
 // readPump reads messages from the WebSocket connection
 func (h *WebSocketHandler) readPump(conn *Connection, redisKey string) {
+	// CRITICAL: Add panic recovery to prevent server crash
 	defer func() {
-		conn.conn.Close()
+		if r := recover(); r != nil {
+			log.Printf("CRITICAL: Recovered from panic in readPump for printer_id %s: %v", conn.printerID, r)
+		}
 		// Connection closed - remove Redis key
 		ctx := context.Background()
 		if err := h.redisClient.Delete(ctx, redisKey); err != nil {
@@ -179,6 +198,7 @@ func (h *WebSocketHandler) readPump(conn *Connection, redisKey string) {
 		} else {
 			log.Printf("INFO: Removed Redis key for printer_id: '%s'", conn.printerID)
 		}
+		// Close connection is handled by defer in HandleWebSocket
 	}()
 
 	for {
@@ -187,7 +207,7 @@ func (h *WebSocketHandler) readPump(conn *Connection, redisKey string) {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("ERROR: WebSocket error for printer_id %s: %v", conn.printerID, err)
 			} else {
-				log.Printf("INFO: WebSocket connection closed for printer_id: '%s'", conn.printerID)
+				log.Printf("INFO: WebSocket connection closed for printer_id: '%s' (normal closure)", conn.printerID)
 			}
 			break
 		}
