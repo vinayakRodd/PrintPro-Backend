@@ -361,10 +361,10 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	// Files should only be queued when partner explicitly clicks "Print" button
 	// This prevents automatic printing when files are uploaded
 
-	// Get partner_id from shop_name
+	// Get partner_email from shop_name
 	ctx := r.Context()
 	
-	// SECURITY: Verify shop exists and get partner_id
+	// SECURITY: Verify shop exists and get partner_email
 	partnerProfile, err := h.partnerProfileRepository.GetByShopName(ctx, shopName)
 	if err != nil {
 		log.Printf("ERROR: Failed to get partner profile for shop '%s' - %v", shopName, err)
@@ -374,22 +374,20 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	
 	// SECURITY: Only allow uploads to authorized shops (status = true)
 	if !partnerProfile.Status {
-		log.Printf("WARNING: Customer %s attempted to upload to unauthorized shop '%s' (status: false)", user.ID, shopName)
+		log.Printf("WARNING: Customer attempted to upload to unauthorized shop '%s' (status: false)", shopName)
 		h.sendErrorResponse(w, http.StatusForbidden, "Shop not authorized", fmt.Sprintf("Shop '%s' is not currently authorized. Please contact support or choose another shop.", shopName))
 		return
 	}
 	
-	partnerID := partnerProfile.ID
+	partnerEmail := partnerProfile.PartnerEmail
 	
 	// SECURITY: Log detailed information to verify correct shop association
-	log.Printf("INFO: Upload - Shop: '%s', PartnerID: %d, Customer: %s, File: %s", 
-		shopName, partnerID, user.ID, filename)
+	log.Printf("INFO: Upload - Shop: '%s', File: %s", shopName, filename)
 	
-		// Convert user.ID (string) to int64 for account_id
-		accountID, err := strconv.ParseInt(user.ID, 10, 64)
-		if err != nil {
-			log.Printf("WARNING: Failed to parse user ID '%s' - %v", user.ID, err)
-			accountID = 0
+		// Use user.ID (email) directly as account_email
+		var accountEmailPtr *string
+		if user.ID != "" {
+			accountEmailPtr = &user.ID
 		}
 
 		// Build file URL/path - use absolute file path
@@ -401,25 +399,19 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create print job in database
-		var accountIDPtr *int64
-		if accountID > 0 {
-			accountIDPtr = &accountID
-		}
-		
-	printJob, err := h.printJobRepository.Create(ctx, accountIDPtr, partnerID, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages, skipPages, backToBackPtr, deleteAfterPrintPtr)
-		if err != nil {
-			log.Printf("ERROR: Failed to create print job in database - %v", err)
-			// Don't fail the upload, but log the error
-			log.Printf("WARNING: File uploaded but print job not created in database")
-		} else {
-		// SECURITY: Verify the created print job has the correct partner_id
-		if printJob.PartnerID != partnerID {
-			log.Printf("ERROR: SECURITY ISSUE - Print job created with wrong partner_id! Expected: %d, Got: %d, File: %s", 
-				partnerID, printJob.PartnerID, filename)
+	printJob, err := h.printJobRepository.Create(ctx, accountEmailPtr, partnerEmail, filename, fileURL, pTypePtr, colorPtr, numCopiesPtr, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPages, skipPages, backToBackPtr, deleteAfterPrintPtr)
+	if err != nil {
+		log.Printf("ERROR: Failed to create print job in database - %v", err)
+		// Don't fail the upload, but log the error
+		log.Printf("WARNING: File uploaded but print job not created in database")
+	} else {
+		// SECURITY: Verify the created print job has the correct partner_email
+		if printJob.PartnerEmail == nil || *printJob.PartnerEmail != partnerEmail {
+			log.Printf("ERROR: SECURITY ISSUE - Print job created with wrong partner_email - File: %s", filename)
 		}
 		// Update print_type and crop_options if provided (Create method doesn't support them yet)
 		if printTypePtr != nil || cropOptionsPtr != nil {
-			err = h.printJobRepository.UpdatePrintOptions(ctx, filename, partnerID, accountIDPtr, nil, nil, nil, nil, nil, nil, nil, nil, nil, printTypePtr, cropOptionsPtr)
+			err = h.printJobRepository.UpdatePrintOptions(ctx, filename, partnerEmail, accountEmailPtr, nil, nil, nil, nil, nil, nil, nil, nil, nil, printTypePtr, cropOptionsPtr)
 			if err != nil {
 				log.Printf("WARNING: Failed to update print_type/crop_options for print job - %v", err)
 			}
@@ -445,7 +437,7 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				totalPagesJSON, _ := json.Marshal(totalPagesOpts)
 				
 				// Use direct SQL update to merge total_pages into page_options
-				updateErr := h.printJobRepository.UpdatePageOptionsWithJSON(ctx, filename, partnerID, string(totalPagesJSON))
+				updateErr := h.printJobRepository.UpdatePageOptionsWithJSON(ctx, filename, partnerEmail, string(totalPagesJSON))
 				if updateErr != nil {
 					log.Printf("WARNING: Failed to update page_options with total_pages - %v", updateErr)
 				} else {
@@ -458,12 +450,12 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			log.Printf("INFO: Total pages counted: %d - Cost will be calculated when job is completed", totalPages)
 		}
 		
-		log.Printf("SUCCESS: Print job created - ID: %d, Customer: %s (account_id: %v), Shop: %s (partner_id: %d), File: %s, PType: %v, PrintType: %v, Color: %v, NumCopies: %v, PageOptions: %+v, CropOptions: %+v", 
-			printJob.ID, user.ID, printJob.AccountID, shopName, printJob.PartnerID, filename, printJob.PType, printTypePtr, printJob.Color, printJob.NumCopies, printJob.PageOptions, cropOptionsPtr)
+		log.Printf("SUCCESS: Print job created - ID: %d, Shop: %s, File: %s, PType: %v, PrintType: %v, Color: %v, NumCopies: %v",
+			printJob.ID, shopName, filename, printJob.PType, printTypePtr, printJob.Color, printJob.NumCopies)
 	}
 
-	log.Printf("SUCCESS: File uploaded - Customer: %s, Shop: %s, File: %s, Size: %d bytes", 
-		user.ID, shopName, filename, header.Size)
+	log.Printf("SUCCESS: File uploaded - Shop: %s, File: %s, Size: %d bytes", 
+		shopName, filename, header.Size)
 
 	// Return success response
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{

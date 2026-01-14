@@ -81,23 +81,23 @@ func ScanCropOptions(src interface{}) (CropOptions, error) {
 
 // PrintJob represents a print job in the database
 type PrintJob struct {
-	ID        int64     `db:"id" json:"id"`
-	AccountID *int64    `db:"account_id" json:"account_id,omitempty"`     // Nullable (customer account ID)
-	PartnerID int64     `db:"partner_id" json:"partner_id"`              // Required - partner account ID
-	PrinterID *int64    `db:"printer_id" json:"printer_id,omitempty"`    // Nullable (assigned later)
-	Filename  string    `db:"filename" json:"filename"`
-	FileURL   string    `db:"file_url" json:"file_url"`
-	PType     *string   `db:"p_type" json:"p_type,omitempty"`            // Nullable - print type (e.g., "A4", "A3", etc.) - legacy field name
-	PrintType *string   `db:"print_type" json:"print_type,omitempty"`    // Nullable - paper size (e.g., "A4", "Letter", "A3") - preferred field name
-	Color     *bool     `db:"color" json:"color,omitempty"`              // Nullable - color printing (default: false)
-	NumCopies *int      `db:"num_copies" json:"num_copies,omitempty"`    // Nullable - number of copies (default: 1)
-	PageOptions PageOptions `db:"page_options" json:"page_options,omitempty"` // Consolidated page selection options (JSONB) - includes crop_options
-	BackToBack *bool `db:"back_to_back" json:"back_to_back,omitempty"` // Nullable - true for duplex printing (both sides), false for simplex (one side)
-	DeleteAfterPrint *bool `db:"delete_after_print" json:"delete_after_print,omitempty"` // Nullable - if true, file will be hidden from partner listings after printing is completed
-	Status    *string   `db:"status" json:"status,omitempty"`            // Nullable - pending, processing, completed, failed, cancelled
-	TotalCost *string   `db:"total_cost" json:"total_cost,omitempty"`    // Nullable (calculated later) - PostgreSQL numeric type
-	CreatedAt *time.Time `db:"created_at" json:"created_at,omitempty"`   // Nullable
-	UpdatedAt *time.Time `db:"updated_at" json:"updated_at,omitempty"`  // Nullable
+	ID             int64      `db:"id" json:"id"` // Primary key (bigserial)
+	PrinterID      *int64     `db:"printer_id" json:"printer_id,omitempty"`    // Nullable (assigned later)
+	Filename       string     `db:"filename" json:"filename"`
+	FileURL        string     `db:"file_url" json:"file_url"`
+	Status         *string    `db:"status" json:"status,omitempty"`            // Nullable - pending, processing, completed, failed, cancelled
+	TotalCost      *string    `db:"total_cost" json:"total_cost,omitempty"`    // Nullable (calculated later) - PostgreSQL numeric type
+	CreatedAt      *time.Time `db:"created_at" json:"created_at,omitempty"`   // Nullable
+	UpdatedAt      *time.Time `db:"updated_at" json:"updated_at,omitempty"`  // Nullable
+	PType          *string    `db:"p_type" json:"p_type,omitempty"`            // Nullable - print type (e.g., "A4", "A3", etc.) - legacy field name
+	PrintType      *string    `db:"print_type" json:"print_type,omitempty"`    // Nullable - paper size (e.g., "A4", "Letter", "A3") - preferred field name
+	Color          *bool      `db:"color" json:"color,omitempty"`              // Nullable - color printing (default: false)
+	NumCopies      *int       `db:"num_copies" json:"num_copies,omitempty"`    // Nullable - number of copies (default: 1)
+	PageOptions    PageOptions `db:"page_options" json:"page_options,omitempty"` // Consolidated page selection options (JSONB) - includes crop_options
+	BackToBack     *bool      `db:"back_to_back" json:"back_to_back,omitempty"` // Nullable - true for duplex printing (both sides), false for simplex (one side)
+	DeleteAfterPrint *bool   `db:"delete_after_print" json:"delete_after_print,omitempty"` // Nullable - if true, file will be hidden from partner listings after printing is completed
+	CustomerEmail   *string   `db:"customer_email" json:"customer_email,omitempty"` // Nullable - customer account email
+	PartnerEmail   *string   `db:"partner_email" json:"partner_email,omitempty"` // Nullable - partner account email (shop owner)
 }
 
 // ScanPageOptions scans JSONB into PageOptions struct

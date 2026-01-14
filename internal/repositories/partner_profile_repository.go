@@ -21,14 +21,14 @@ func NewPartnerProfileRepository(db *pgxpool.Pool) *PartnerProfileRepository {
 
 // Create creates a new partner profile
 // Status is set to false by default (pending authorization)
-func (r *PartnerProfileRepository) Create(ctx context.Context, accountID int64, shopName, printerID string) (*partner_profile.PartnerProfile, error) {
+func (r *PartnerProfileRepository) Create(ctx context.Context, accountEmail string, shopName, printerID string) (*partner_profile.PartnerProfile, error) {
 	var p partner_profile.PartnerProfile
 	err := r.db.QueryRow(ctx,
-		`INSERT INTO partner_profiles (account_id, shop_name, printer_id, status) 
+		`INSERT INTO partner_profiles (partner_email, shop_name, printer_id, status) 
 		 VALUES ($1, $2, $3, false) 
-		 RETURNING id, account_id, shop_name, printer_id, status`,
-		accountID, shopName, printerID,
-	).Scan(&p.ID, &p.AccountID, &p.ShopName, &p.PrinterID, &p.Status)
+		 RETURNING partner_email, shop_name, printer_id, status`,
+		accountEmail, shopName, printerID,
+	).Scan(&p.PartnerEmail, &p.ShopName, &p.PrinterID, &p.Status)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create partner profile: %w", err)
@@ -37,31 +37,13 @@ func (r *PartnerProfileRepository) Create(ctx context.Context, accountID int64, 
 	return &p, nil
 }
 
-// GetByID retrieves a partner profile by ID
-func (r *PartnerProfileRepository) GetByID(ctx context.Context, id int64) (*partner_profile.PartnerProfile, error) {
+// GetByAccountEmail retrieves a partner profile by account email (primary key)
+func (r *PartnerProfileRepository) GetByAccountEmail(ctx context.Context, accountEmail string) (*partner_profile.PartnerProfile, error) {
 	var p partner_profile.PartnerProfile
 	err := r.db.QueryRow(ctx,
-		"SELECT id, account_id, shop_name, printer_id, status FROM partner_profiles WHERE id = $1",
-		id,
-	).Scan(&p.ID, &p.AccountID, &p.ShopName, &p.PrinterID, &p.Status)
-
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("partner profile not found")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get partner profile: %w", err)
-	}
-
-	return &p, nil
-}
-
-// GetByAccountID retrieves a partner profile by account ID
-func (r *PartnerProfileRepository) GetByAccountID(ctx context.Context, accountID int64) (*partner_profile.PartnerProfile, error) {
-	var p partner_profile.PartnerProfile
-	err := r.db.QueryRow(ctx,
-		"SELECT id, account_id, shop_name, printer_id, status FROM partner_profiles WHERE account_id = $1",
-		accountID,
-	).Scan(&p.ID, &p.AccountID, &p.ShopName, &p.PrinterID, &p.Status)
+		"SELECT partner_email, shop_name, printer_id, status FROM partner_profiles WHERE partner_email = $1",
+		accountEmail,
+	).Scan(&p.PartnerEmail, &p.ShopName, &p.PrinterID, &p.Status)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("partner profile not found")
@@ -77,9 +59,9 @@ func (r *PartnerProfileRepository) GetByAccountID(ctx context.Context, accountID
 func (r *PartnerProfileRepository) GetByPrinterID(ctx context.Context, printerID string) (*partner_profile.PartnerProfile, error) {
 	var p partner_profile.PartnerProfile
 	err := r.db.QueryRow(ctx,
-		"SELECT id, account_id, shop_name, printer_id, status FROM partner_profiles WHERE printer_id = $1",
+		"SELECT partner_email, shop_name, printer_id, status FROM partner_profiles WHERE printer_id = $1",
 		printerID,
-	).Scan(&p.ID, &p.AccountID, &p.ShopName, &p.PrinterID, &p.Status)
+	).Scan(&p.PartnerEmail, &p.ShopName, &p.PrinterID, &p.Status)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("partner profile not found")
@@ -93,17 +75,17 @@ func (r *PartnerProfileRepository) GetByPrinterID(ctx context.Context, printerID
 
 // ShopNameResult represents a shop name result
 type ShopNameResult struct {
-	ShopName string
-	ID       int64
+	ShopName     string
+	PartnerEmail string
 }
 
 // GetByShopName retrieves a partner profile by shop name
 func (r *PartnerProfileRepository) GetByShopName(ctx context.Context, shopName string) (*partner_profile.PartnerProfile, error) {
 	var p partner_profile.PartnerProfile
 	err := r.db.QueryRow(ctx,
-		"SELECT id, account_id, shop_name, printer_id, status FROM partner_profiles WHERE shop_name = $1",
+		"SELECT partner_email, shop_name, printer_id, status FROM partner_profiles WHERE shop_name = $1",
 		shopName,
-	).Scan(&p.ID, &p.AccountID, &p.ShopName, &p.PrinterID, &p.Status)
+	).Scan(&p.PartnerEmail, &p.ShopName, &p.PrinterID, &p.Status)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("partner profile not found for shop name: %s", shopName)
@@ -115,32 +97,31 @@ func (r *PartnerProfileRepository) GetByShopName(ctx context.Context, shopName s
 	return &p, nil
 }
 
-// GetPartnerIDByShopName gets the partner_profiles.id using shop_name
-// print_jobs.partner_id should reference partner_profiles.id
-func (r *PartnerProfileRepository) GetPartnerIDByShopName(ctx context.Context, shopName string) (int64, error) {
-	var partnerID int64
+// GetAccountEmailByShopName gets the partner_profiles.partner_email using shop_name
+func (r *PartnerProfileRepository) GetAccountEmailByShopName(ctx context.Context, shopName string) (string, error) {
+	var partnerEmail string
 	err := r.db.QueryRow(ctx,
-		`SELECT id 
+		`SELECT partner_email 
 		 FROM partner_profiles 
 		 WHERE shop_name = $1`,
 		shopName,
-	).Scan(&partnerID)
+	).Scan(&partnerEmail)
 
 	if err == sql.ErrNoRows {
-		return 0, fmt.Errorf("partner profile not found for shop name: %s", shopName)
+		return "", fmt.Errorf("partner profile not found for shop name: %s", shopName)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to get partner ID by shop name: %w", err)
+		return "", fmt.Errorf("failed to get partner email by shop name: %w", err)
 	}
 
-	return partnerID, nil
+	return partnerEmail, nil
 }
 
 // GetAllShopNames retrieves all shop names from partner_profiles table
 // Only returns shops where status = true (authorized shops visible to customers)
 func (r *PartnerProfileRepository) GetAllShopNames(ctx context.Context) ([]ShopNameResult, error) {
 	rows, err := r.db.Query(ctx,
-		"SELECT id, shop_name FROM partner_profiles WHERE status = true ORDER BY shop_name ASC",
+		"SELECT partner_email, shop_name FROM partner_profiles WHERE status = true ORDER BY shop_name ASC",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get shop names: %w", err)
@@ -151,7 +132,7 @@ func (r *PartnerProfileRepository) GetAllShopNames(ctx context.Context) ([]ShopN
 
 	for rows.Next() {
 		var shop ShopNameResult
-		if err := rows.Scan(&shop.ID, &shop.ShopName); err != nil {
+		if err := rows.Scan(&shop.PartnerEmail, &shop.ShopName); err != nil {
 			return nil, fmt.Errorf("failed to scan shop name: %w", err)
 		}
 		shops = append(shops, shop)
@@ -162,5 +143,21 @@ func (r *PartnerProfileRepository) GetAllShopNames(ctx context.Context) ([]ShopN
 	}
 
 	return shops, nil
+}
+
+// Deprecated methods for backward compatibility - these should not be used
+// GetByID is deprecated - use GetByAccountEmail instead
+func (r *PartnerProfileRepository) GetByID(ctx context.Context, id int64) (*partner_profile.PartnerProfile, error) {
+	return nil, fmt.Errorf("GetByID is deprecated, use GetByAccountEmail instead")
+}
+
+// GetByAccountID is deprecated - use GetByAccountEmail instead
+func (r *PartnerProfileRepository) GetByAccountID(ctx context.Context, accountID int64) (*partner_profile.PartnerProfile, error) {
+	return nil, fmt.Errorf("GetByAccountID is deprecated, use GetByAccountEmail instead")
+}
+
+// GetPartnerIDByShopName is deprecated - use GetAccountEmailByShopName instead
+func (r *PartnerProfileRepository) GetPartnerIDByShopName(ctx context.Context, shopName string) (int64, error) {
+	return 0, fmt.Errorf("GetPartnerIDByShopName is deprecated, use GetAccountEmailByShopName instead")
 }
 

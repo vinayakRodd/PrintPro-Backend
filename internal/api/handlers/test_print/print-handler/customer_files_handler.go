@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
-	"strconv"
 	"strings"
 )
 
@@ -35,13 +34,8 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 
 	ctx := r.Context()
 
-	// Get account_id from user.ID
-	accountID, err := strconv.ParseInt(user.ID, 10, 64)
-	if err != nil {
-		log.Printf("ERROR: Failed to parse user ID '%s' - %v", user.ID, err)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "Invalid account ID format")
-		return
-	}
+	// Get account_email from user.ID (user.ID is the email)
+	accountEmail := user.ID
 
 	// Get shop_name query parameter (REQUIRED)
 	// SECURITY: shop_name is mandatory - customers can only view files for a specific shop
@@ -53,9 +47,9 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 	}
 
 	shopName = strings.TrimSpace(shopName)
-	log.Printf("INFO: Customer requested files for shop: %s (account_id: %d)", shopName, accountID)
+	log.Printf("INFO: Customer requested files for shop: %s", shopName)
 
-	// Get partner_id from shop_name
+	// Get partner_email from shop_name
 	partnerProfile, err := h.partnerProfileRepo.GetByShopName(ctx, shopName)
 	if err != nil {
 		log.Printf("ERROR: Shop not found: %s - %v", shopName, err)
@@ -63,18 +57,18 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	partnerID := partnerProfile.ID
-	log.Printf("INFO: Querying files for customer account_id: %d AND shop '%s' (partner_id: %d)", accountID, shopName, partnerID)
+	partnerEmail := partnerProfile.PartnerEmail
+	log.Printf("INFO: Querying files for customer AND shop '%s'", shopName)
 
-	// SECURITY: Query database with BOTH account_id AND partner_id - database-level filtering
+	// SECURITY: Query database with BOTH account_email AND partner_email - database-level filtering
 	// This ensures customers only see files they uploaded to the specific shop
-	printJobs, err := h.printJobRepo.GetByAccountIDAndPartnerID(ctx, accountID, partnerID)
+	printJobs, err := h.printJobRepo.GetByAccountEmailAndPartnerEmail(ctx, accountEmail, partnerEmail)
 	if err != nil {
-		log.Printf("ERROR: Failed to get print jobs for account_id %d and partner_id %d: %v", accountID, partnerID, err)
+		log.Printf("ERROR: Failed to get print jobs - %v", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to retrieve files")
 		return
 	}
-	log.Printf("INFO: Found %d files for customer account_id: %d in shop '%s' (partner_id: %d)", len(printJobs), accountID, shopName, partnerID)
+	log.Printf("INFO: Found %d files for customer in shop '%s'", len(printJobs), shopName)
 
 	readyDir := h.agentHandler.GetReadyDir()
 	fileList := []map[string]interface{}{}
@@ -150,7 +144,7 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	log.Printf("SUCCESS: Files listed for customer - Account: %s, Count: %d", user.ID, len(fileList))
+	log.Printf("SUCCESS: Files listed for customer - Count: %d", len(fileList))
 
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true,

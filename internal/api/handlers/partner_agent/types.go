@@ -31,7 +31,7 @@ type PrintJobRepository interface {
 
 // JobCostRepository interface for job cost operations
 type JobCostRepository interface {
-	CreateOrUpdate(ctx context.Context, printJobID int64, cost *jobcost.JobCost) error
+	CreateOrUpdate(ctx context.Context, accountEmail string, printJobID int64, cost *jobcost.JobCost) error
 	UpdateTotalCostInPrintJob(ctx context.Context, printJobID int64, totalCost float64) error
 }
 

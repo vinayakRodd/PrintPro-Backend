@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"print-pro-backend/internal/infrastructure"
 	"print-pro-backend/internal/middleware/auth_middleware"
 	"print-pro-backend/internal/models/printer"
@@ -74,7 +73,7 @@ func (h *PrinterHandler) UpdatePrintersHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	fmt.Printf("✅ Found partner profile: ID=%d, Shop=%s\n", partnerProfile.ID, partnerProfile.ShopName)
+	fmt.Printf("✅ Found partner profile - Shop: %s\n", partnerProfile.ShopName)
 
 	// Process each printer
 	successCount := 0
@@ -91,7 +90,8 @@ func (h *PrinterHandler) UpdatePrintersHandler(w http.ResponseWriter, r *http.Re
 		}
 
 		// Upsert printer to database
-		printer, err := h.printerRepository.UpsertPrinter(ctx, partnerProfile.ID, p.Name, serialNumber, status)
+		partnerEmail := partnerProfile.PartnerEmail
+		printer, err := h.printerRepository.UpsertPrinter(ctx, &partnerEmail, p.Name, serialNumber, status)
 		if err != nil {
 			fmt.Printf("❌ ERROR: Failed to upsert printer [%d] %s - %v\n", i+1, p.Name, err)
 			errorCount++
@@ -102,8 +102,8 @@ func (h *PrinterHandler) UpdatePrintersHandler(w http.ResponseWriter, r *http.Re
 			i+1, printer.PrinterName, printer.SerialNumber, printer.Status, printer.ID)
 
 		// Update Redis heartbeat for real-time status tracking
-		// Key format: printer:heartbeat:{partner_id}:{serial_number}
-		heartbeatKey := fmt.Sprintf("printer:heartbeat:%d:%s", partnerProfile.ID, serialNumber)
+		// Key format: printer:heartbeat:{partner_email}:{serial_number}
+		heartbeatKey := fmt.Sprintf("printer:heartbeat:%s:%s", partnerEmail, serialNumber)
 		heartbeatValue := time.Now().Format(time.RFC3339)
 		
 		// Set heartbeat with 5 minute expiration (printer considered offline if no update in 5 min)
@@ -157,26 +157,21 @@ func (h *PrinterHandler) GetPrintersHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Convert user.ID (string) to int64 (account_id)
-	accountID, err := strconv.ParseInt(user.ID, 10, 64)
-	if err != nil {
-		fmt.Printf("❌ ERROR: Invalid account ID format: %s - %v\n", user.ID, err)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "Invalid account ID format")
-		return
-	}
+	// Get account_email from user.ID (user.ID is the email)
+	accountEmail := user.ID
 
-	// Get partner profile by account_id
-	partnerProfile, err := h.partnerProfileRepository.GetByAccountID(ctx, accountID)
+	// Get partner profile by account_email
+	partnerProfile, err := h.partnerProfileRepository.GetByAccountEmail(ctx, accountEmail)
 	if err != nil {
-		fmt.Printf("❌ ERROR: Partner profile not found for account_id: %d - %v\n", accountID, err)
+		fmt.Printf("❌ ERROR: Partner profile not found - %v\n", err)
 		h.sendErrorResponse(w, http.StatusNotFound, "Partner profile not found", "Partner profile not found for this account")
 		return
 	}
 
 	// Get all printers for this partner
-	printers, err := h.printerRepository.GetByPartnerID(ctx, partnerProfile.ID)
+	printers, err := h.printerRepository.GetByAccountEmail(ctx, partnerProfile.PartnerEmail)
 	if err != nil {
-		fmt.Printf("❌ ERROR: Failed to get printers for partner_id: %d - %v\n", partnerProfile.ID, err)
+		fmt.Printf("❌ ERROR: Failed to get printers - %v\n", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to retrieve printers", err.Error())
 		return
 	}

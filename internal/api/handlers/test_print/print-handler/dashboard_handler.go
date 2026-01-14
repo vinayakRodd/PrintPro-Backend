@@ -3,9 +3,8 @@ package print_handler
 import (
 	"log"
 	"net/http"
-	"strconv"
 
-	"print-pro-backend/internal/models"
+	"print-pro-backend/internal/middleware/auth_middleware"
 )
 
 // DashboardOverview represents the dashboard statistics
@@ -25,17 +24,10 @@ func (h *PrintHandler) GetDashboardOverview(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Get authenticated user from context
-	user := r.Context().Value("user")
-	if user == nil {
+	authUser, ok := auth_middleware.GetUserFromContext(r)
+	if !ok {
 		log.Printf("ERROR: No user in context for dashboard overview")
 		h.sendErrorResponse(w, http.StatusUnauthorized, "Authentication required", "Unauthorized")
-		return
-	}
-
-	authUser, ok := user.(*models.User)
-	if !ok {
-		log.Printf("ERROR: Invalid user type in context")
-		h.sendErrorResponse(w, http.StatusUnauthorized, "Invalid authentication", "Unauthorized")
 		return
 	}
 
@@ -48,28 +40,23 @@ func (h *PrintHandler) GetDashboardOverview(w http.ResponseWriter, r *http.Reque
 
 	ctx := r.Context()
 
-	// Get partner profile to get partner_id
-	accountID, err := strconv.ParseInt(authUser.ID, 10, 64)
-	if err != nil {
-		log.Printf("ERROR: Invalid account ID: %s - %v", authUser.ID, err)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid account ID", "Invalid account")
-		return
-	}
+	// Get partner profile to get partner_email
+	accountEmail := authUser.ID
 
-	partnerProfile, err := h.partnerProfileRepo.GetByAccountID(ctx, accountID)
+	partnerProfile, err := h.partnerProfileRepo.GetByAccountEmail(ctx, accountEmail)
 	if err != nil {
-		log.Printf("ERROR: Partner profile not found for account_id %d - %v", accountID, err)
+		log.Printf("ERROR: Partner profile not found - %v", err)
 		h.sendErrorResponse(w, http.StatusNotFound, "Partner profile not found", "Partner not found")
 		return
 	}
 
-	partnerID := partnerProfile.ID
-	log.Printf("INFO: Fetching dashboard overview for partner_id: %d (shop: %s)", partnerID, partnerProfile.ShopName)
+	partnerEmail := partnerProfile.PartnerEmail
+	log.Printf("INFO: Fetching dashboard overview for partner (shop: %s)", partnerProfile.ShopName)
 
 	// Query database for statistics
-	totalOrders, pendingOrders, completed, totalRevenue, err := h.printJobRepo.GetDashboardStats(ctx, partnerID)
+	totalOrders, pendingOrders, completed, totalRevenue, err := h.printJobRepo.GetDashboardStats(ctx, partnerEmail)
 	if err != nil {
-		log.Printf("ERROR: Failed to get dashboard stats for partner_id %d - %v", partnerID, err)
+		log.Printf("ERROR: Failed to get dashboard stats - %v", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to retrieve dashboard statistics", "Internal error")
 		return
 	}

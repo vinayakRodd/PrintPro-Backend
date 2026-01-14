@@ -143,11 +143,11 @@ func (s *GoogleAuthService) RegisterOrLoginUser(ctx context.Context, googleUser 
 	}
 
 	// Account exists - use the user_type from the accounts table (automatic detection)
-	log.Printf("Google Sign-In: Account found - ID: %d, UserType: %s (auto-detected)", accountRecord.ID, accountRecord.UserType)
+	log.Printf("Google Sign-In: Account found - Email: %s, UserType: %s (auto-detected)", accountRecord.Email, accountRecord.UserType)
 	
 	// Return user with auto-detected user_type from accounts table
 	return &models.User{
-		ID:        fmt.Sprintf("%d", accountRecord.ID),
+		ID:        accountRecord.Email, // Use email as ID
 		Email:     accountRecord.Email,
 		Name:      googleUser.Name, // Use name from Google token
 		UserType:  accountRecord.UserType, // Auto-detected from accounts table

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"print-pro-backend/internal/models/printjob"
 	"time"
@@ -23,7 +22,7 @@ func NewPrintJobRepository(db *pgxpool.Pool) *PrintJobRepository {
 }
 
 // Create creates a new print job in the database
-func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partnerID int64, filename, fileURL string, pType *string, color *bool, numCopies *int, startPage *int, endPage *int, pageFilterType *string, individualColorPages []int, skipPages []int, backToBack *bool, deleteAfterPrint *bool) (*printjob.PrintJob, error) {
+func (r *PrintJobRepository) Create(ctx context.Context, accountEmail *string, partnerEmail string, filename, fileURL string, pType *string, color *bool, numCopies *int, startPage *int, endPage *int, pageFilterType *string, individualColorPages []int, skipPages []int, backToBack *bool, deleteAfterPrint *bool) (*printjob.PrintJob, error) {
 	var job printjob.PrintJob
 	now := time.Now()
 	status := printjob.StatusPending
@@ -94,11 +93,11 @@ func (r *PrintJobRepository) Create(ctx context.Context, accountID *int64, partn
 
 	var pageOptsJSONBScan interface{}
 	err = r.db.QueryRow(ctx,
-		`INSERT INTO print_jobs (account_id, partner_id, filename, file_url, p_type, color, num_copies, page_options, back_to_back, delete_after_print, status, created_at, updated_at) 
+		`INSERT INTO print_jobs (customer_email, partner_email, filename, file_url, p_type, color, num_copies, page_options, back_to_back, delete_after_print, status, created_at, updated_at) 
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13) 
-		 RETURNING id, account_id, partner_id, printer_id, filename, file_url, p_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at`,
-		accountID, partnerID, filename, fileURL, pType, colorValue, numCopiesValue, pageOptsJSONB, backToBackValue, deleteAfterPrintValue, status, now, now,
-	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &pageOptsJSONBScan, &job.BackToBack, &job.DeleteAfterPrint, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
+		 RETURNING id, customer_email, partner_email, printer_id, filename, file_url, p_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at`,
+		accountEmail, partnerEmail, filename, fileURL, pType, colorValue, numCopiesValue, pageOptsJSONB, backToBackValue, deleteAfterPrintValue, status, now, now,
+	).Scan(&job.ID, &job.CustomerEmail, &job.PartnerEmail, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &job.Color, &job.NumCopies, &pageOptsJSONBScan, &job.BackToBack, &job.DeleteAfterPrint, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
 	
 	if err != nil {
 		return nil, fmt.Errorf("failed to create print job: %w", err)
@@ -176,13 +175,13 @@ func (r *PrintJobRepository) GetByFilename(ctx context.Context, filename string)
 	var printType *string
 	
 	err := r.db.QueryRow(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
+		`SELECT id, customer_email, partner_email, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
 		 WHERE filename = $1
 		 ORDER BY created_at DESC
 		 LIMIT 1`,
 		filename,
-	).Scan(&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &printType, &job.Color, &job.NumCopies, &pageOptsJSON, &job.BackToBack, &job.DeleteAfterPrint, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
+	).Scan(&job.ID, &job.CustomerEmail, &job.PartnerEmail, &job.PrinterID, &job.Filename, &job.FileURL, &job.PType, &printType, &job.Color, &job.NumCopies, &pageOptsJSON, &job.BackToBack, &job.DeleteAfterPrint, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt)
 	
 	// Set PrintType (prefer print_type over p_type)
 	if printType != nil {
@@ -204,18 +203,18 @@ func (r *PrintJobRepository) GetByFilename(ctx context.Context, filename string)
 	return &job, nil
 }
 
-// GetFilenamesByPartnerID retrieves all filenames for a specific partner
-// SECURITY: Only returns files where partner_id matches exactly (not NULL, not 0)
-func (r *PrintJobRepository) GetFilenamesByPartnerID(ctx context.Context, partnerID int64) ([]string, error) {
+// GetFilenamesByPartnerEmail retrieves all filenames for a specific partner
+// SECURITY: Only returns files where partner_email matches exactly
+func (r *PrintJobRepository) GetFilenamesByPartnerEmail(ctx context.Context, partnerEmail string) ([]string, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT DISTINCT filename, created_at
 		 FROM print_jobs 
-		 WHERE partner_id = $1 AND partner_id IS NOT NULL
+		 WHERE partner_email = $1 AND partner_email IS NOT NULL
 		 ORDER BY created_at DESC`,
-		partnerID,
+		partnerEmail,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get filenames by partner_id: %w", err)
+		return nil, fmt.Errorf("failed to get filenames by partner_email: %w", err)
 	}
 	defer rows.Close()
 
@@ -245,7 +244,7 @@ func (r *PrintJobRepository) scanPrintJobRow(rows interface {
 	var printType *string
 	
 	err := rows.Scan(
-		&job.ID, &job.AccountID, &job.PartnerID, &job.PrinterID, &job.Filename, &job.FileURL,
+		&job.ID, &job.CustomerEmail, &job.PartnerEmail, &job.PrinterID, &job.Filename, &job.FileURL,
 		&job.PType, &printType, &job.Color, &job.NumCopies, &pageOptsJSON, &job.BackToBack, &job.DeleteAfterPrint, &job.Status, &job.TotalCost, &job.CreatedAt, &job.UpdatedAt,
 	)
 	if err != nil {
@@ -269,25 +268,25 @@ func (r *PrintJobRepository) scanPrintJobRow(rows interface {
 	return &job, nil
 }
 
-// GetByPartnerID retrieves all print jobs for a specific partner
-// SECURITY: Only returns files where partner_id matches exactly (not NULL, not 0)
+// GetByPartnerEmail retrieves all print jobs for a specific partner
+// SECURITY: Only returns files where partner_email matches exactly
 // Uses strict equality check to prevent any cross-shop data leakage
 // Filters out completed jobs where delete_after_print = true
-func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64) ([]printjob.PrintJob, error) {
+func (r *PrintJobRepository) GetByPartnerEmail(ctx context.Context, partnerEmail string) ([]printjob.PrintJob, error) {
 	// SECURITY: Use strict WHERE clause with explicit type checking
 	// Filter out completed jobs where delete_after_print = true (files should be hidden after printing)
 	// IMPORTANT: Only hide files when BOTH conditions are true: delete_after_print = true AND status = 'completed'
 	// Files with NULL status or other statuses should still be visible even if delete_after_print = true
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
+		`SELECT id, customer_email, partner_email, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
-		 WHERE partner_id = $1::bigint AND partner_id IS NOT NULL
+		 WHERE partner_email = $1 AND partner_email IS NOT NULL
 		   AND NOT (delete_after_print = true AND COALESCE(status, '') = 'completed')
 		 ORDER BY created_at DESC`,
-		partnerID,
+		partnerEmail,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get print jobs by partner_id: %w", err)
+		return nil, fmt.Errorf("failed to get print jobs by partner_email: %w", err)
 	}
 	defer rows.Close()
 
@@ -298,9 +297,9 @@ func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64
 			return nil, fmt.Errorf("failed to scan print job: %w", err)
 		}
 		
-		// SECURITY: Double-check partner_id matches (defensive programming)
+		// SECURITY: Double-check partner_email matches (defensive programming)
 		// This should never happen if the SQL query is correct, but we verify anyway
-		if job.PartnerID != partnerID {
+		if job.PartnerEmail == nil || *job.PartnerEmail != partnerEmail {
 			// Log error - this indicates a serious database integrity issue
 			// Skip this job - it doesn't belong to this partner
 			continue
@@ -314,6 +313,16 @@ func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64
 	}
 
 	return jobs, nil
+}
+
+// GetByPartnerID is deprecated - use GetByPartnerEmail instead
+func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64) ([]printjob.PrintJob, error) {
+	return nil, fmt.Errorf("GetByPartnerID is deprecated, use GetByPartnerEmail instead")
+}
+
+// GetFilenamesByPartnerID is deprecated - use GetFilenamesByPartnerEmail instead
+func (r *PrintJobRepository) GetFilenamesByPartnerID(ctx context.Context, partnerID int64) ([]string, error) {
+	return nil, fmt.Errorf("GetFilenamesByPartnerID is deprecated, use GetFilenamesByPartnerEmail instead")
 }
 
 // UpdateStatus updates the status of a print job by filename
@@ -332,10 +341,10 @@ func (r *PrintJobRepository) UpdateStatus(ctx context.Context, filename, status 
 }
 
 // UpdatePrintOptions updates print job options (color, num_copies, start_page, end_page, print_type, crop_options)
-// SECURITY: Only updates if the file belongs to the specified partner_id
-// For customers: accountID should be provided to verify ownership
+// SECURITY: Only updates if the file belongs to the specified partner_email
+// For customers: accountEmail should be provided to verify ownership
 // Only updates fields that are provided (non-nil)
-func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename string, partnerID int64, accountID *int64, color *bool, numCopies *int, startPage *int, endPage *int, pageFilterType *string, individualColorPages *[]int, skipPages *[]int, backToBack *bool, deleteAfterPrint *bool, printType *string, cropOptions *printjob.CropOptions) error {
+func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename string, partnerEmail string, accountEmail *string, color *bool, numCopies *int, startPage *int, endPage *int, pageFilterType *string, individualColorPages *[]int, skipPages *[]int, backToBack *bool, deleteAfterPrint *bool, printType *string, cropOptions *printjob.CropOptions) error {
 	// Build dynamic UPDATE query - only update fields that are provided (non-nil)
 	updates := []string{}
 	args := []interface{}{}
@@ -435,13 +444,13 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 	// Build WHERE clause with security checks
 	// Parameter indices continue from where SET clause left off
 	whereParamIndex := argIndex
-	args = append(args, filename, partnerID)
-	whereClause := fmt.Sprintf("filename = $%d AND partner_id = $%d::bigint", whereParamIndex, whereParamIndex+1)
+	args = append(args, filename, partnerEmail)
+	whereClause := fmt.Sprintf("filename = $%d AND partner_email = $%d", whereParamIndex, whereParamIndex+1)
 	
-	// If accountID is provided (for customer verification), add account_id check
-	if accountID != nil {
-		args = append(args, *accountID)
-		whereClause += fmt.Sprintf(" AND account_id = $%d::bigint", whereParamIndex+2)
+	// If accountEmail is provided (for customer verification), add customer_email check
+	if accountEmail != nil {
+		args = append(args, *accountEmail)
+		whereClause += fmt.Sprintf(" AND customer_email = $%d", whereParamIndex+2)
 	}
 	
 	// Build the SET clause
@@ -462,7 +471,7 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 	
 	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
-		if accountID != nil {
+		if accountEmail != nil {
 			return fmt.Errorf("print job not found or does not belong to this customer")
 		}
 		return fmt.Errorf("print job not found or does not belong to this partner")
@@ -471,17 +480,17 @@ func (r *PrintJobRepository) UpdatePrintOptions(ctx context.Context, filename st
 	return nil
 }
 
-// GetByAccountID retrieves all print jobs for a specific customer (account_id)
-func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64) ([]printjob.PrintJob, error) {
+// GetByAccountEmail retrieves all print jobs for a specific customer (customer_email)
+func (r *PrintJobRepository) GetByAccountEmail(ctx context.Context, accountEmail string) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
+		`SELECT id, customer_email, partner_email, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
-		 WHERE account_id = $1
+		 WHERE customer_email = $1
 		 ORDER BY created_at DESC`,
-		accountID,
+		accountEmail,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get print jobs by account_id: %w", err)
+		return nil, fmt.Errorf("failed to get print jobs by customer_email: %w", err)
 	}
 	defer rows.Close()
 
@@ -501,19 +510,19 @@ func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64
 	return jobs, nil
 }
 
-// GetByAccountIDAndPartnerID retrieves all print jobs for a specific customer (account_id) AND shop (partner_id)
+// GetByAccountEmailAndPartnerEmail retrieves all print jobs for a specific customer (customer_email) AND shop (partner_email)
 // SECURITY: This ensures customers only see files they uploaded to a specific shop
 // Excludes completed files from the results
-func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, accountID int64, partnerID int64) ([]printjob.PrintJob, error) {
+func (r *PrintJobRepository) GetByAccountEmailAndPartnerEmail(ctx context.Context, accountEmail string, partnerEmail string) ([]printjob.PrintJob, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id, account_id, partner_id, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
+		`SELECT id, customer_email, partner_email, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
 		 FROM print_jobs 
-		 WHERE account_id = $1 AND partner_id = $2 AND partner_id IS NOT NULL AND (status IS NULL OR status != 'completed')
+		 WHERE customer_email = $1 AND partner_email = $2 AND partner_email IS NOT NULL AND (status IS NULL OR status != 'completed')
 		 ORDER BY created_at DESC`,
-		accountID, partnerID,
+		accountEmail, partnerEmail,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get print jobs by account_id and partner_id: %w", err)
+		return nil, fmt.Errorf("failed to get print jobs by customer_email and partner_email: %w", err)
 	}
 	defer rows.Close()
 
@@ -523,9 +532,9 @@ func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, acc
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan print job: %w", err)
 		}
-		// Security verification: double-check partner_id matches
-		if job.PartnerID != partnerID {
-			return nil, fmt.Errorf("security error: print job %d has partner_id %d but expected %d", job.ID, job.PartnerID, partnerID)
+		// Security verification: double-check partner_email matches
+		if job.PartnerEmail == nil || *job.PartnerEmail != partnerEmail {
+			return nil, fmt.Errorf("security error: print job %d has partner_email %v but expected %s", job.ID, job.PartnerEmail, partnerEmail)
 		}
 		jobs = append(jobs, *job)
 	}
@@ -537,13 +546,13 @@ func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, acc
 	return jobs, nil
 }
 
-// DeleteByFilenameAndAccountID deletes a print job by filename, but only if it belongs to the specified account_id
+// DeleteByFilenameAndAccountEmail deletes a print job by filename, but only if it belongs to the specified customer_email
 // This ensures customers can only delete their own files
-func (r *PrintJobRepository) DeleteByFilenameAndAccountID(ctx context.Context, filename string, accountID int64) error {
+func (r *PrintJobRepository) DeleteByFilenameAndAccountEmail(ctx context.Context, filename string, accountEmail string) error {
 	result, err := r.db.Exec(ctx,
 		`DELETE FROM print_jobs 
-		 WHERE filename = $1 AND account_id = $2`,
-		filename, accountID,
+		 WHERE filename = $1 AND customer_email = $2`,
+		filename, accountEmail,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to delete print job: %w", err)
@@ -557,51 +566,59 @@ func (r *PrintJobRepository) DeleteByFilenameAndAccountID(ctx context.Context, f
 	return nil
 }
 
+// Deprecated methods for backward compatibility
+// GetByAccountID is deprecated - use GetByAccountEmail instead
+func (r *PrintJobRepository) GetByAccountID(ctx context.Context, accountID int64) ([]printjob.PrintJob, error) {
+	return nil, fmt.Errorf("GetByAccountID is deprecated, use GetByAccountEmail instead")
+}
+
+// GetByAccountIDAndPartnerID is deprecated - use GetByAccountEmailAndPartnerEmail instead
+func (r *PrintJobRepository) GetByAccountIDAndPartnerID(ctx context.Context, accountID int64, partnerID int64) ([]printjob.PrintJob, error) {
+	return nil, fmt.Errorf("GetByAccountIDAndPartnerID is deprecated, use GetByAccountEmailAndPartnerEmail instead")
+}
+
+// DeleteByFilenameAndAccountID is deprecated - use DeleteByFilenameAndAccountEmail instead
+func (r *PrintJobRepository) DeleteByFilenameAndAccountID(ctx context.Context, filename string, accountID int64) error {
+	return fmt.Errorf("DeleteByFilenameAndAccountID is deprecated, use DeleteByFilenameAndAccountEmail instead")
+}
+
 // GetDashboardStats returns dashboard statistics for a partner
 // Revenue is calculated only from job_cost table (only completed jobs have entries in job_cost)
-func (r *PrintJobRepository) GetDashboardStats(ctx context.Context, partnerID int64) (totalOrders, pendingOrders, completed int, totalRevenue float64, err error) {
+func (r *PrintJobRepository) GetDashboardStats(ctx context.Context, partnerEmail string) (totalOrders, pendingOrders, completed int, totalRevenue float64, err error) {
 	query := `
 		SELECT 
 			COUNT(*) as total_orders,
 			COUNT(*) FILTER (WHERE status IS NULL OR status = 'pending' OR status = 'ready') as pending_orders,
 			COUNT(*) FILTER (WHERE status = 'completed') as completed,
-			COALESCE(SUM(jc.total_cost), 0) as total_revenue
+			COALESCE(SUM(jc.total_cost), 0)::float8 as total_revenue
 		FROM print_jobs pj
 		LEFT JOIN job_cost jc ON pj.id = jc.print_job_id
-		WHERE pj.partner_id = $1::bigint AND pj.partner_id IS NOT NULL
+		WHERE pj.partner_email = $1 AND pj.partner_email IS NOT NULL
 	`
 
-	var revenueStr string
-	err = r.db.QueryRow(ctx, query, partnerID).Scan(
+	err = r.db.QueryRow(ctx, query, partnerEmail).Scan(
 		&totalOrders,
 		&pendingOrders,
 		&completed,
-		&revenueStr,
+		&totalRevenue,
 	)
 	if err != nil {
 		return 0, 0, 0, 0, fmt.Errorf("failed to get dashboard stats: %w", err)
 	}
 
-	// Parse total_revenue (stored as string in database)
-	if revenueStr != "" {
-		parsed, parseErr := strconv.ParseFloat(revenueStr, 64)
-		if parseErr == nil {
-			totalRevenue = parsed
-		}
-	}
-
 	return totalOrders, pendingOrders, completed, totalRevenue, nil
 }
+
 // UpdatePageOptionsWithJSON updates page_options by merging the provided JSON with existing page_options
-func (r *PrintJobRepository) UpdatePageOptionsWithJSON(ctx context.Context, filename string, partnerID int64, pageOptsJSON string) error {
+func (r *PrintJobRepository) UpdatePageOptionsWithJSON(ctx context.Context, filename string, partnerEmail string, pageOptsJSON string) error {
 	query := `
 		UPDATE print_jobs 
 		SET page_options = COALESCE(page_options, '{}'::jsonb) || $1::jsonb,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE filename = $2 AND partner_id = $3::bigint
+		WHERE filename = $2 AND partner_email = $3
 	`
 	
-	result, err := r.db.Exec(ctx, query, pageOptsJSON, filename, partnerID)
+	result, err := r.db.Exec(ctx, query, pageOptsJSON, filename, partnerEmail)
 	if err != nil {
 		return fmt.Errorf("failed to update page_options: %w", err)
 	}

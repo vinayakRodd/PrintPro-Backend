@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
-	"strconv"
 	"strings"
 )
 
@@ -33,7 +32,7 @@ func (h *PrintHandler) PreviewPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("DEBUG: PreviewPDF request - User: %s (Type: %s), Filename: %s", user.ID, user.UserType, filename)
+	log.Printf("DEBUG: PreviewPDF request - UserType: %s, Filename: %s", user.UserType, filename)
 
 	// Sanitize filename (prevent path traversal)
 	sanitizedFilename := filepath.Base(filename) // Get only the base name
@@ -44,29 +43,24 @@ func (h *PrintHandler) PreviewPDF(w http.ResponseWriter, r *http.Request) {
 	// If user is a customer, verify they own the file
 	if user.UserType == "customer" {
 		ctx := r.Context()
-		accountID, err := strconv.ParseInt(user.ID, 10, 64)
-		if err != nil {
-			log.Printf("ERROR: Failed to parse user ID '%s' - %v", user.ID, err)
-			h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "Invalid account ID format")
-			return
-		}
+		accountEmail := user.ID
 
 		// Check if the file belongs to this customer
 		job, err := h.printJobRepo.GetByFilename(ctx, sanitizedFilename)
 		if err != nil {
-			log.Printf("ERROR: File not found in database or access denied - User: %s, File: %s, Error: %v", user.ID, sanitizedFilename, err)
+			log.Printf("ERROR: File not found in database or access denied - File: %s, Error: %v", sanitizedFilename, err)
 			h.sendErrorResponse(w, http.StatusForbidden, "Access denied", "You do not have permission to view this file")
 			return
 		}
 
 		// Verify the file belongs to this customer
-		if job.AccountID == nil || *job.AccountID != accountID {
-			log.Printf("ERROR: Customer trying to access file that doesn't belong to them - User: %s, File: %s, File Owner: %v", user.ID, sanitizedFilename, job.AccountID)
+		if job.CustomerEmail == nil || *job.CustomerEmail != accountEmail {
+			log.Printf("ERROR: Customer trying to access file that doesn't belong to them - File: %s", sanitizedFilename)
 			h.sendErrorResponse(w, http.StatusForbidden, "Access denied", "You do not have permission to view this file")
 			return
 		}
 
-		log.Printf("DEBUG: Customer access verified - User: %s owns file: %s", user.ID, sanitizedFilename)
+		log.Printf("DEBUG: Customer access verified - File: %s", sanitizedFilename)
 	}
 	// Partners can view any file (no ownership check needed)
 
@@ -189,7 +183,7 @@ func (h *PrintHandler) PreviewPDF(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 
-	log.Printf("SUCCESS: Serving file for preview - User: %s, File: %s, Type: %s, Size: %d bytes", user.ID, sanitizedFilename, contentType, fileInfo.Size())
+	log.Printf("SUCCESS: Serving file for preview - File: %s, Type: %s, Size: %d bytes", sanitizedFilename, contentType, fileInfo.Size())
 
 	// Stream the PDF file
 	http.ServeContent(w, r, sanitizedFilename, fileInfo.ModTime(), file)

@@ -49,6 +49,7 @@ func RegisterAuthRoutes(
 	
 	// Protected auth routes (require authentication) - Profile/Data: 200 req/min
 	http.HandleFunc("/api/auth/me", corsHandler(profileRateLimiter.LimitMiddleware(authMiddlewareFunc(authHandler.GetMe))))
+	http.HandleFunc("/api/auth/partner/me", corsHandler(profileRateLimiter.LimitMiddleware(authMiddlewareFunc(authHandler.GetPartnerMe))))
 	http.HandleFunc("/api/auth/user-type", corsHandler(profileRateLimiter.LimitMiddleware(authMiddlewareFunc(authHandler.CheckUserType))))
 	http.HandleFunc("/api/auth/user-type/check", corsHandler(profileRateLimiter.LimitMiddleware(authMiddlewareFunc(authHandler.CheckUserType)))) // Alias for frontend
 	

@@ -41,13 +41,13 @@ func (h *TokenHelper) GenerateTokensAndSetCookies(w http.ResponseWriter, userID,
 	}
 
 	// Generate JWT access token (15 minutes expiry)
-	log.Printf("🔑 Generating access token (expires in 15 minutes) for %s: %s", userType, userID)
+	log.Printf("🔑 Generating access token (expires in 15 minutes) for %s", userType)
 	accessToken, err := h.jwtService.GenerateAccessToken(userID, email, userType)
 	if err != nil {
 		log.Printf("ERROR: Failed to generate access token - %v", err)
 		return "", "", err
 	}
-	log.Printf("✅ Access token generated successfully for user: %s", userID)
+	log.Printf("✅ Access token generated successfully")
 	// SECURITY NOTE: accessToken contains sensitive data - never log it
 
 	// Generate JWT refresh token (7 days expiry)
@@ -57,7 +57,7 @@ func (h *TokenHelper) GenerateTokensAndSetCookies(w http.ResponseWriter, userID,
 		log.Printf("ERROR: Failed to generate refresh token - %v", err)
 		return "", "", err
 	}
-	log.Printf("✅ Refresh token generated successfully for user: %s", userID)
+	log.Printf("✅ Refresh token generated successfully")
 	// SECURITY NOTE: refreshToken contains sensitive data - never log it
 
 	// Store refresh token in Redis (for revocation)

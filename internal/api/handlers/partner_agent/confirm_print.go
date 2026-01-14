@@ -85,17 +85,22 @@ func (h *AgentHandler) ConfirmPrint(w http.ResponseWriter, r *http.Request) {
 				log.Printf("WARNING: Failed to calculate cost for completed print job - %v", err)
 			} else {
 				// Store cost in job_cost table
-				err = h.jobCostRepo.CreateOrUpdate(ctx, printJob.ID, jobCost)
-				if err != nil {
-					log.Printf("WARNING: Failed to store job cost - %v", err)
+				// Note: job_cost uses account_email as PK, so we need the customer's email
+				if printJob.CustomerEmail == nil {
+					log.Printf("WARNING: Cannot store job cost - print job has no customer_email")
 				} else {
-					// Update total_cost in print_jobs table
-					err = h.jobCostRepo.UpdateTotalCostInPrintJob(ctx, printJob.ID, jobCost.TotalCost)
+					err = h.jobCostRepo.CreateOrUpdate(ctx, *printJob.CustomerEmail, printJob.ID, jobCost)
 					if err != nil {
-						log.Printf("WARNING: Failed to update total_cost in print_jobs - %v", err)
+						log.Printf("WARNING: Failed to store job cost - %v", err)
 					} else {
-						log.Printf("SUCCESS: Cost calculated and stored for completed job - Total: ₹%.2f (Color: %d pages, B&W: %d pages, Copies: %d)", 
-							jobCost.TotalCost, jobCost.ColorPages, jobCost.BlackWhitePages, jobCost.NumCopies)
+						// Update total_cost in print_jobs table
+						err = h.jobCostRepo.UpdateTotalCostInPrintJob(ctx, printJob.ID, jobCost.TotalCost)
+						if err != nil {
+							log.Printf("WARNING: Failed to update total_cost in print_jobs - %v", err)
+						} else {
+							log.Printf("SUCCESS: Cost calculated and stored for completed job - Total: ₹%.2f (Color: %d pages, B&W: %d pages, Copies: %d)", 
+								jobCost.TotalCost, jobCost.ColorPages, jobCost.BlackWhitePages, jobCost.NumCopies)
+						}
 					}
 				}
 			}

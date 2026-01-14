@@ -2,7 +2,6 @@ package shop_handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"print-pro-backend/internal/middleware/auth_middleware"
@@ -31,8 +30,8 @@ func NewShopHandler(
 
 // ShopName represents a shop name response
 type ShopName struct {
-	ShopName string `json:"shop_name"`
-	ID       int64  `json:"id"`
+	ShopName     string `json:"shop_name"`
+	AccountEmail string `json:"account_email,omitempty"`
 }
 
 // GetShopNamesResponse represents the response for getting shop names
@@ -54,7 +53,7 @@ func (h *ShopHandler) GetShopNames(w http.ResponseWriter, r *http.Request) {
 	// Get user from context (optional - can be public or authenticated)
 	user, ok := auth_middleware.GetUserFromContext(r)
 	if ok {
-		log.Printf("INFO: GetShopNames called by user: %s (type: %s)", user.ID, user.UserType)
+		log.Printf("INFO: GetShopNames called by user (type: %s)", user.UserType)
 	} else {
 		log.Printf("INFO: GetShopNames called by unauthenticated user")
 	}
@@ -72,8 +71,8 @@ func (h *ShopHandler) GetShopNames(w http.ResponseWriter, r *http.Request) {
 	shops := make([]ShopName, len(shopResults))
 	for i, result := range shopResults {
 		shops[i] = ShopName{
-			ShopName: result.ShopName,
-			ID:       result.ID,
+			ShopName:     result.ShopName,
+			AccountEmail: result.PartnerEmail,
 		}
 	}
 
@@ -128,33 +127,21 @@ func (h *ShopHandler) GetShopPreference(w http.ResponseWriter, r *http.Request) 
 
 	// Only customers can have shop preferences
 	if user.UserType != "customer" {
-		log.Printf("ERROR: GetShopPreference called by non-customer user: %s (type: %s)", user.ID, user.UserType)
+		log.Printf("ERROR: GetShopPreference called by non-customer user (type: %s)", user.UserType)
 		h.sendErrorResponse(w, http.StatusForbidden, "Forbidden", "Only customers can have shop preferences")
 		return
 	}
 
 	ctx := r.Context()
 
-	// Get customer profile to get customer_id
-	accountID, err := parseUserID(user.ID)
-	if err != nil {
-		log.Printf("ERROR: Invalid user ID format: %s", user.ID)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", err.Error())
-		return
-	}
+	// Get account_email from user.ID (user.ID is the email)
+	accountEmail := user.ID
 
-	customerProfile, err := h.customerProfileRepository.GetByAccountID(ctx, accountID)
-	if err != nil {
-		log.Printf("ERROR: Customer profile not found for account ID: %d - %v", accountID, err)
-		h.sendErrorResponse(w, http.StatusNotFound, "Customer profile not found", err.Error())
-		return
-	}
-
-	// Get shop preference
-	preference, err := h.shopPreferenceRepository.GetByCustomerID(ctx, customerProfile.ID)
+	// Get shop preference by account_email
+	preference, err := h.shopPreferenceRepository.GetByAccountEmail(ctx, accountEmail)
 	if err != nil {
 		// No preference found - return success with null shop
-		log.Printf("INFO: No shop preference found for customer ID: %d", customerProfile.ID)
+		log.Printf("INFO: No shop preference found for customer")
 		h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"shop":    nil,
@@ -162,11 +149,10 @@ func (h *ShopHandler) GetShopPreference(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	log.Printf("SUCCESS: Shop preference retrieved for customer ID: %d, shop ID: %d", customerProfile.ID, preference.ShopID)
+	log.Printf("SUCCESS: Shop preference retrieved - shop: %s", preference.ShopName)
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"shop": map[string]interface{}{
-			"id":        preference.ShopID,
 			"shop_name": preference.ShopName,
 		},
 	})
@@ -190,14 +176,14 @@ func (h *ShopHandler) SetShopPreference(w http.ResponseWriter, r *http.Request) 
 
 	// Only customers can have shop preferences
 	if user.UserType != "customer" {
-		log.Printf("ERROR: SetShopPreference called by non-customer user: %s (type: %s)", user.ID, user.UserType)
+		log.Printf("ERROR: SetShopPreference called by non-customer user (type: %s)", user.UserType)
 		h.sendErrorResponse(w, http.StatusForbidden, "Forbidden", "Only customers can have shop preferences")
 		return
 	}
 
 	// Parse request body
 	var req struct {
-		ShopID int64 `json:"shop_id"`
+		ShopName string `json:"shop_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("ERROR: Failed to decode request body: %v", err)
@@ -205,45 +191,33 @@ func (h *ShopHandler) SetShopPreference(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if req.ShopID <= 0 {
-		log.Printf("ERROR: Invalid shop_id: %d", req.ShopID)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid shop_id", "shop_id must be a positive number")
+	if req.ShopName == "" {
+		log.Printf("ERROR: Empty shop_name")
+		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid shop_name", "shop_name is required")
 		return
 	}
 
 	ctx := r.Context()
 
-	// Get customer profile to get customer_id
-	accountID, err := parseUserID(user.ID)
-	if err != nil {
-		log.Printf("ERROR: Invalid user ID format: %s", user.ID)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", err.Error())
-		return
-	}
-
-	customerProfile, err := h.customerProfileRepository.GetByAccountID(ctx, accountID)
-	if err != nil {
-		log.Printf("ERROR: Customer profile not found for account ID: %d - %v", accountID, err)
-		h.sendErrorResponse(w, http.StatusNotFound, "Customer profile not found", err.Error())
-		return
-	}
+	// Get account_email from user.ID (user.ID is the email)
+	accountEmail := user.ID
 
 	// Verify shop exists
-	_, err = h.partnerProfileRepository.GetByID(ctx, req.ShopID)
+	_, err := h.partnerProfileRepository.GetByShopName(ctx, req.ShopName)
 	if err != nil {
-		log.Printf("ERROR: Shop not found: %d - %v", req.ShopID, err)
+		log.Printf("ERROR: Shop not found: %s - %v", req.ShopName, err)
 		h.sendErrorResponse(w, http.StatusNotFound, "Shop not found", "The specified shop does not exist")
 		return
 	}
 
-	// Save shop preference
-	if err := h.shopPreferenceRepository.Upsert(ctx, customerProfile.ID, req.ShopID); err != nil {
+	// Save shop preference (using account_email as PK)
+	if err := h.shopPreferenceRepository.Upsert(ctx, accountEmail); err != nil {
 		log.Printf("ERROR: Failed to save shop preference: %v", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to save shop preference", err.Error())
 		return
 	}
 
-	log.Printf("SUCCESS: Shop preference saved for customer ID: %d, shop ID: %d", customerProfile.ID, req.ShopID)
+	log.Printf("SUCCESS: Shop preference saved - shop: %s", req.ShopName)
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 	})
@@ -267,46 +241,25 @@ func (h *ShopHandler) DeleteShopPreference(w http.ResponseWriter, r *http.Reques
 
 	// Only customers can have shop preferences
 	if user.UserType != "customer" {
-		log.Printf("ERROR: DeleteShopPreference called by non-customer user: %s (type: %s)", user.ID, user.UserType)
+		log.Printf("ERROR: DeleteShopPreference called by non-customer user (type: %s)", user.UserType)
 		h.sendErrorResponse(w, http.StatusForbidden, "Forbidden", "Only customers can have shop preferences")
 		return
 	}
 
 	ctx := r.Context()
 
-	// Get customer profile to get customer_id
-	accountID, err := parseUserID(user.ID)
-	if err != nil {
-		log.Printf("ERROR: Invalid user ID format: %s", user.ID)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", err.Error())
-		return
-	}
-
-	customerProfile, err := h.customerProfileRepository.GetByAccountID(ctx, accountID)
-	if err != nil {
-		log.Printf("ERROR: Customer profile not found for account ID: %d - %v", accountID, err)
-		h.sendErrorResponse(w, http.StatusNotFound, "Customer profile not found", err.Error())
-		return
-	}
+	// Get account_email from user.ID (user.ID is the email)
+	accountEmail := user.ID
 
 	// Delete shop preference
-	if err := h.shopPreferenceRepository.DeleteByCustomerID(ctx, customerProfile.ID); err != nil {
+	if err := h.shopPreferenceRepository.DeleteByAccountEmail(ctx, accountEmail); err != nil {
 		// If preference doesn't exist, that's okay - return success
-		log.Printf("INFO: Shop preference not found for customer ID: %d (may already be deleted)", customerProfile.ID)
+		log.Printf("INFO: Shop preference not found for account_email: %s (may already be deleted)", accountEmail)
 	}
 
-	log.Printf("SUCCESS: Shop preference deleted for customer ID: %d", customerProfile.ID)
+	log.Printf("SUCCESS: Shop preference deleted")
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 	})
 }
 
-// parseUserID converts string user ID to int64
-func parseUserID(userIDStr string) (int64, error) {
-	var accountID int64
-	_, err := fmt.Sscanf(userIDStr, "%d", &accountID)
-	if err != nil {
-		return 0, fmt.Errorf("invalid user ID format: %s", userIDStr)
-	}
-	return accountID, nil
-}
