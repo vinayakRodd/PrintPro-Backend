@@ -57,7 +57,7 @@ type PrintRequest struct {
 // This DTO hides the internal database schema structure
 type JobCostDTO struct {
 	JobID          int64   `json:"job_id"`           // print_job_id (renamed for security)
-	CustomerID     string  `json:"customer_id"`      // customer_email (renamed for security)
+	Username       *string `json:"username,omitempty"` // username from accounts table (fetched using customer_email)
 	PageInfo       PageInfoDTO `json:"page_info"`    // Grouped page information
 	Pricing        PricingDTO  `json:"pricing"`      // Grouped pricing information
 	Timestamp      TimestampDTO `json:"timestamp"`   // Grouped timestamp information
@@ -86,9 +86,10 @@ type TimestampDTO struct {
 
 // JobCostsResponse represents the API response for job costs
 type JobCostsResponse struct {
-	Success bool         `json:"success"`
-	Message string       `json:"message"`
-	Data    []JobCostDTO `json:"data"`
-	Count   int          `json:"count"`
+	Success    bool         `json:"success"`
+	Message    string       `json:"message"`
+	Data       []JobCostDTO `json:"data"`
+	Count      int          `json:"count"`
+	TotalUsers int          `json:"total_users"` // Count of unique customer emails (unique users)
 }
 

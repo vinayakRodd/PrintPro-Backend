@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"print-pro-backend/internal/models/jobcost"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -176,6 +177,50 @@ func (r *JobCostRepository) GetByPartnerEmail(ctx context.Context, partnerEmail 
 	rows, err := r.db.Query(ctx, query, partnerEmail)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get job costs by partner email: %w", err)
+	}
+	defer rows.Close()
+	
+	var costs []jobcost.JobCost
+	for rows.Next() {
+		var cost jobcost.JobCost
+		err := rows.Scan(
+			&cost.PrintJobID, &cost.AccountEmail, &cost.TotalPages, &cost.PagesToPrint,
+			&cost.ColorPages, &cost.BlackWhitePages, &cost.NumCopies,
+			&cost.TotalCost, &cost.CreatedAt, &cost.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan job cost: %w", err)
+		}
+		costs = append(costs, cost)
+	}
+	
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating job costs: %w", err)
+	}
+	
+	return costs, nil
+}
+
+// GetByMonth retrieves all job costs for a specific month and year
+// Filters by created_at timestamp to get invoices for that month
+func (r *JobCostRepository) GetByMonth(ctx context.Context, year int, month int) ([]jobcost.JobCost, error) {
+	// Calculate the first day of the target month
+	startOfMonth := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	
+	// Calculate the first day of the NEXT month (automatically handles Dec -> Jan)
+	startOfNextMonth := startOfMonth.AddDate(0, 1, 0)
+	
+	query := `
+		SELECT print_job_id, customer_email, total_pages, pages_to_print, color_pages, black_white_pages,
+		       num_copies, total_cost, created_at, updated_at
+		FROM job_cost
+		WHERE created_at >= $1 AND created_at < $2
+		ORDER BY created_at DESC
+	`
+	
+	rows, err := r.db.Query(ctx, query, startOfMonth, startOfNextMonth)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get job costs by month: %w", err)
 	}
 	defer rows.Close()
 	
