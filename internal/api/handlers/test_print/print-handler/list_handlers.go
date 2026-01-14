@@ -126,6 +126,26 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	
 	log.Printf("INFO: Verified %d files belong to partner (shop: %s)", len(verifiedFiles), partnerProfile.ShopName)
 	
+	// Collect unique customer emails and fetch usernames
+	customerEmailSet := make(map[string]bool)
+	for _, job := range verifiedFiles {
+		if job.CustomerEmail != nil && *job.CustomerEmail != "" {
+			customerEmailSet[*job.CustomerEmail] = true
+		}
+	}
+	
+	// Fetch usernames for all customer emails
+	customerUsernameMap := make(map[string]*string) // customer_email -> username
+	for customerEmail := range customerEmailSet {
+		account, err := h.accountRepository.GetByEmail(ctx, customerEmail)
+		if err != nil {
+			log.Printf("WARNING: Failed to fetch username for customer_email %s - %v", customerEmail, err)
+			customerUsernameMap[customerEmail] = nil // Set to nil if not found
+		} else {
+			customerUsernameMap[customerEmail] = account.Username
+		}
+	}
+	
 	for filename, job := range verifiedFiles {
 		// SECURITY: Final verification - ensure this file belongs to this partner
 		if job.PartnerEmail == nil || *job.PartnerEmail != partnerEmail {
@@ -186,6 +206,12 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 				printType = job.PType
 			}
 			
+			// Get username for this customer
+			var customerUsername *string
+			if job.CustomerEmail != nil {
+				customerUsername = customerUsernameMap[*job.CustomerEmail]
+			}
+			
 			fileList = append(fileList, map[string]interface{}{
 			"filename":                    filename,
 			"size":                        fileInfo.Size(),
@@ -201,6 +227,8 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			"back_to_back":                job.BackToBack,
 			"delete_after_print":         job.DeleteAfterPrint,
 			"created_at":                  job.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			"customer_email":              job.CustomerEmail,
+			"customer_username":           customerUsername,
 		})
 	}
 

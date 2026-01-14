@@ -117,7 +117,7 @@ func (a *Application) RegisterRoutes() {
 	wsHub := websocket.NewHub()
 	wsHandler := websocket.NewWebSocketHandler(wsHub, a.redisClient)
 	
-	printHandler := print_handler.NewPrintHandler(testPrintDir, agentHandler, a.repositories.PartnerProfileRepository, a.repositories.PrintJobRepository, a.repositories.JobCostRepository, a.services.CostCalculator, wsHub)
+	printHandler := print_handler.NewPrintHandler(testPrintDir, agentHandler, a.repositories.PartnerProfileRepository, a.repositories.PrintJobRepository, a.repositories.JobCostRepository, a.repositories.AccountRepository, a.services.CostCalculator, wsHub)
 	uploadHandler := test_print.NewUploadHandler(
 		testPrintDir,
 		agentHandler,

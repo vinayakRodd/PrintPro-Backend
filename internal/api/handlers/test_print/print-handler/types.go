@@ -15,6 +15,7 @@ type PrintHandler struct {
 	partnerProfileRepo     *repositories.PartnerProfileRepository
 	printJobRepo           *repositories.PrintJobRepository
 	jobCostRepo            *repositories.JobCostRepository
+	accountRepository      *repositories.AccountRepository
 	costCalculator         interface {
 		CalculateCost(filePath string, pageOptions printjob.PageOptions, color *bool, numCopies *int, individualColorPages []int) (*jobcost.JobCost, error)
 	}
@@ -28,6 +29,7 @@ func NewPrintHandler(
 	partnerProfileRepo *repositories.PartnerProfileRepository,
 	printJobRepo *repositories.PrintJobRepository,
 	jobCostRepo *repositories.JobCostRepository,
+	accountRepository *repositories.AccountRepository,
 	costCalculator interface {
 		CalculateCost(filePath string, pageOptions printjob.PageOptions, color *bool, numCopies *int, individualColorPages []int) (*jobcost.JobCost, error)
 	},
@@ -39,6 +41,7 @@ func NewPrintHandler(
 		partnerProfileRepo: partnerProfileRepo,
 		printJobRepo:       printJobRepo,
 		jobCostRepo:        jobCostRepo,
+		accountRepository:  accountRepository,
 		costCalculator:     costCalculator,
 		wsHub:              wsHub,
 	}

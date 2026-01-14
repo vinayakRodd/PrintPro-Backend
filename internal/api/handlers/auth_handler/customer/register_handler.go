@@ -99,7 +99,14 @@ func (h *RegisterHandler) HandleRegister(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Step 1: Create account in accounts table
-	accountRecord, err := h.accountRepository.Create(ctx, email, string(hashedPassword), account.UserTypeCustomer, nil)
+	// Extract username from request (optional field)
+	var usernamePtr *string
+	if req.Username != "" {
+		username := strings.TrimSpace(req.Username)
+		usernamePtr = &username
+	}
+	
+	accountRecord, err := h.accountRepository.Create(ctx, email, string(hashedPassword), account.UserTypeCustomer, usernamePtr)
 	if err != nil {
 		log.Printf("ERROR: Failed to create account in accounts table - %v", err)
 		log.Printf("ERROR: UserType: %s", account.UserTypeCustomer)
