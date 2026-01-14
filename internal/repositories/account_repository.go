@@ -68,3 +68,15 @@ func (r *AccountRepository) UpdatePassword(ctx context.Context, email, passwordH
 	return nil
 }
 
+// UpdateUsername updates the account's username
+func (r *AccountRepository) UpdateUsername(ctx context.Context, email string, username *string) error {
+	_, err := r.db.Exec(ctx,
+		"UPDATE accounts SET username = $1 WHERE email = $2",
+		username, email,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update username: %w", err)
+	}
+	return nil
+}
+

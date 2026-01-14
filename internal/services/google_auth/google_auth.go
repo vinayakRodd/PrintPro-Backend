@@ -12,6 +12,7 @@ import (
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/models"
 	"print-pro-backend/internal/repositories"
+	"strings"
 	"time"
 
 )
@@ -115,10 +116,24 @@ func (s *GoogleAuthService) VerifyGoogleToken(ctx context.Context, idToken strin
 	}
 
 	// Create user object
+	// Prefer given_name for name, fallback to name field
+	displayName := tokenInfo.GivenName
+	if displayName == "" {
+		displayName = tokenInfo.Name
+	}
+	if displayName == "" {
+		// If both are empty, use email prefix as fallback
+		if idx := strings.Index(tokenInfo.Email, "@"); idx > 0 {
+			displayName = tokenInfo.Email[:idx]
+		} else {
+			displayName = tokenInfo.Email
+		}
+	}
+	
 	user := &models.User{
 		ID:       tokenInfo.Sub, // Google user ID
 		Email:    tokenInfo.Email,
-		Name:     tokenInfo.Name,
+		Name:     displayName,
 		Picture:  tokenInfo.Picture,
 		Provider: "google",
 		CreatedAt: time.Now(),
@@ -144,6 +159,22 @@ func (s *GoogleAuthService) RegisterOrLoginUser(ctx context.Context, googleUser 
 
 	// Account exists - use the user_type from the accounts table (automatic detection)
 	log.Printf("Google Sign-In: Account found - Email: %s, UserType: %s (auto-detected)", accountRecord.Email, accountRecord.UserType)
+	
+	// Update username if it's missing and we have a name from Google
+	if accountRecord.Username == nil && googleUser.Name != "" {
+		// Extract username from Google name (use given_name if available, otherwise use first part of name)
+		username := extractUsernameFromName(googleUser.Name)
+		if username != "" {
+			err := s.accountRepository.UpdateUsername(ctx, accountRecord.Email, &username)
+			if err != nil {
+				log.Printf("WARNING: Failed to update username from Google Sign-In - %v", err)
+				// Continue anyway - username update is not critical
+			} else {
+				log.Printf("Google Sign-In: Updated username from Google name - Username: %s", username)
+				accountRecord.Username = &username
+			}
+		}
+	}
 	
 	// Return user with auto-detected user_type from accounts table
 	return &models.User{
@@ -176,5 +207,39 @@ func parseUnixTimestamp(ts string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return time.Unix(timestamp, 0), nil
+}
+
+// extractUsernameFromName extracts a username from a full name
+// Uses the first word (given name) and converts to lowercase, removing spaces and special characters
+func extractUsernameFromName(name string) string {
+	if name == "" {
+		return ""
+	}
+	
+	// Split by space and take the first part (given name)
+	parts := strings.Fields(name)
+	if len(parts) == 0 {
+		return ""
+	}
+	
+	// Use the first part (given name) as username
+	username := parts[0]
+	
+	// Convert to lowercase and remove special characters (keep only alphanumeric and underscore)
+	var result strings.Builder
+	for _, char := range username {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' {
+			result.WriteRune(char)
+		}
+	}
+	
+	username = strings.ToLower(result.String())
+	
+	// Limit length to reasonable size (e.g., 50 characters)
+	if len(username) > 50 {
+		username = username[:50]
+	}
+	
+	return username
 }
 

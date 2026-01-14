@@ -60,12 +60,14 @@ type RegisterPartnerRequest struct {
 	Password  string `json:"password"`   // Required: partner's password (min 6 characters)
 	ShopName  string `json:"shop_name"`  // Required: name of the print shop
 	PrinterID string `json:"printer_id,omitempty"` // Optional: unique ID for the Python Agent
+	Username  string `json:"username,omitempty"`   // Optional: username for the account
 }
 
 // RegisterCustomerRequest represents the request to register a new customer
 type RegisterCustomerRequest struct {
 	Email    string `json:"email"`    // Required: customer's email address
 	Password string `json:"password"` // Required: customer's password (min 6 characters)
+	Username string `json:"username,omitempty"` // Optional: username for the account
 }
 
 // LoginRequest represents the request to login with email and password
