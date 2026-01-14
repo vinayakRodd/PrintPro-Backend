@@ -3,6 +3,7 @@ package print_handler
 import (
 	"print-pro-backend/internal/api/handlers/partner_agent"
 	"print-pro-backend/internal/api/handlers/websocket"
+	"print-pro-backend/internal/infrastructure"
 	"print-pro-backend/internal/models/jobcost"
 	"print-pro-backend/internal/models/printjob"
 	"print-pro-backend/internal/repositories"
@@ -16,6 +17,7 @@ type PrintHandler struct {
 	printJobRepo           *repositories.PrintJobRepository
 	jobCostRepo            *repositories.JobCostRepository
 	accountRepository      *repositories.AccountRepository
+	redisClient            *infrastructure.RedisClient
 	costCalculator         interface {
 		CalculateCost(filePath string, pageOptions printjob.PageOptions, color *bool, numCopies *int, individualColorPages []int) (*jobcost.JobCost, error)
 	}
@@ -30,6 +32,7 @@ func NewPrintHandler(
 	printJobRepo *repositories.PrintJobRepository,
 	jobCostRepo *repositories.JobCostRepository,
 	accountRepository *repositories.AccountRepository,
+	redisClient *infrastructure.RedisClient,
 	costCalculator interface {
 		CalculateCost(filePath string, pageOptions printjob.PageOptions, color *bool, numCopies *int, individualColorPages []int) (*jobcost.JobCost, error)
 	},
@@ -42,6 +45,7 @@ func NewPrintHandler(
 		printJobRepo:       printJobRepo,
 		jobCostRepo:        jobCostRepo,
 		accountRepository:  accountRepository,
+		redisClient:        redisClient,
 		costCalculator:     costCalculator,
 		wsHub:              wsHub,
 	}
