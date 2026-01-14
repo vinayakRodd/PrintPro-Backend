@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
 	"print-pro-backend/internal/models/printjob"
-	"strconv"
 )
 
 // ListFiles lists all PDFs from Redis queues and ready folder (NOT archived)
@@ -38,54 +37,48 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Get partner_id from account_id
-	accountID, err := strconv.ParseInt(user.ID, 10, 64)
-	if err != nil {
-		log.Printf("ERROR: Failed to parse user ID '%s' - %v", user.ID, err)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "Invalid account ID format")
-		return
-	}
+	// Get partner_email from account_email (user.ID is the email)
+	accountEmail := user.ID
 
-	// Get partner profile to get partner_id
-	partnerProfile, err := h.partnerProfileRepo.GetByAccountID(ctx, accountID)
+	// Get partner profile to get partner_email
+	partnerProfile, err := h.partnerProfileRepo.GetByAccountEmail(ctx, accountEmail)
 	if err != nil {
-		log.Printf("ERROR: Partner profile not found for account_id: %d - %v", accountID, err)
+		log.Printf("ERROR: Partner profile not found - %v", err)
 		h.sendErrorResponse(w, http.StatusNotFound, "Partner profile not found", "Partner profile not found for this account")
 		return
 	}
 
-	partnerID := partnerProfile.ID
-	log.Printf("INFO: Listing files for partner_id: %d (account_id: %d, shop: %s)", partnerID, accountID, partnerProfile.ShopName)
+	partnerEmail := partnerProfile.PartnerEmail
+	log.Printf("INFO: Listing files for partner (shop: %s)", partnerProfile.ShopName)
 
 	// SECURITY: Get all print jobs that belong to THIS partner ONLY from database
 	// This ensures partners only see files uploaded to their shop, not other shops
 	// Database is the source of truth - we ONLY iterate through files in the database for this partner
-	// Using GetByPartnerID to get full records and verify partner_id matches
-	partnerJobs, err := h.printJobRepo.GetByPartnerID(ctx, partnerID)
+	// Using GetByPartnerEmail to get full records and verify partner_email matches
+	partnerJobs, err := h.printJobRepo.GetByPartnerEmail(ctx, partnerEmail)
 	if err != nil {
 		log.Printf("ERROR: Failed to get partner print jobs from database: %v (will show no files for security)", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to retrieve files")
 		return
 	}
-	log.Printf("INFO: Found %d print jobs in database belonging to partner_id %d (shop-specific filtering applied)", len(partnerJobs), partnerID)
+	log.Printf("INFO: Found %d print jobs in database for partner (shop-specific filtering applied)", len(partnerJobs))
 
-	// SECURITY: Double-check and filter out any jobs that don't match partner_id
+	// SECURITY: Double-check and filter out any jobs that don't match partner_email
 	// This is a defensive check in case the database query somehow returns wrong data
 	filteredJobs := []printjob.PrintJob{}
 	for _, job := range partnerJobs {
-		if job.PartnerID == partnerID {
+		if job.PartnerEmail != nil && *job.PartnerEmail == partnerEmail {
 			filteredJobs = append(filteredJobs, job)
 		} else {
-			log.Printf("ERROR: SECURITY ISSUE - Print job ID %d (filename: %s) has partner_id %d but expected %d - REMOVING FROM LIST", 
-				job.ID, job.Filename, job.PartnerID, partnerID)
+			log.Printf("ERROR: SECURITY ISSUE - Print job ID %d has mismatched partner_email - REMOVING FROM LIST", job.ID)
 		}
 	}
 	partnerJobs = filteredJobs
-	log.Printf("INFO: After security filtering, %d print jobs remain for partner_id %d", len(partnerJobs), partnerID)
+	log.Printf("INFO: After security filtering, %d print jobs remain for partner", len(partnerJobs))
 
 	// If no files found for this partner, return empty list
 	if len(partnerJobs) == 0 {
-		log.Printf("INFO: No files found for partner_id %d", partnerID)
+		log.Printf("INFO: No files found for partner")
 		h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"files":   []map[string]interface{}{},
@@ -123,22 +116,21 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	// Create a map to track which files we've verified belong to this partner
 	verifiedFiles := make(map[string]printjob.PrintJob)
 	for _, job := range partnerJobs {
-		// Double-check: Only include if partner_id matches
-		if job.PartnerID == partnerID {
+		// Double-check: Only include if partner_email matches
+		if job.PartnerEmail != nil && *job.PartnerEmail == partnerEmail {
 			verifiedFiles[job.Filename] = job
 		} else {
-			log.Printf("ERROR: SECURITY - Job ID %d (file: %s) has partner_id %d, expected %d - EXCLUDED", 
-				job.ID, job.Filename, job.PartnerID, partnerID)
+			log.Printf("ERROR: SECURITY - Job ID %d has mismatched partner_email - EXCLUDED", job.ID)
 		}
 	}
 	
-	log.Printf("INFO: Verified %d files belong to partner_id %d (shop: %s)", len(verifiedFiles), partnerID, partnerProfile.ShopName)
+	log.Printf("INFO: Verified %d files belong to partner (shop: %s)", len(verifiedFiles), partnerProfile.ShopName)
 	
 	for filename, job := range verifiedFiles {
 		// SECURITY: Final verification - ensure this file belongs to this partner
-		if job.PartnerID != partnerID {
-			log.Printf("ERROR: CRITICAL SECURITY ISSUE - File '%s' (job ID: %d) has partner_id %d but expected %d - SKIPPING", 
-				filename, job.ID, job.PartnerID, partnerID)
+		if job.PartnerEmail == nil || *job.PartnerEmail != partnerEmail {
+			log.Printf("ERROR: CRITICAL SECURITY ISSUE - File '%s' (job ID: %d) has mismatched partner_email - SKIPPING", 
+				filename, job.ID)
 				continue
 			}
 
@@ -146,7 +138,7 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		filePath := filepath.Join(readyDir, filename)
 		fileInfo, err := os.Stat(filePath)
 		if os.IsNotExist(err) {
-			log.Printf("DEBUG: File '%s' exists in database for partner_id %d but not in ready folder (may be archived)", filename, partnerID)
+			log.Printf("DEBUG: File '%s' exists in database but not in ready folder (may be archived)", filename)
 			continue
 		}
 			if err != nil {
@@ -251,7 +243,7 @@ func (h *PrintHandler) ListPrinters(w http.ResponseWriter, r *http.Request) {
 	printers := h.agentHandler.GetSyncedPrinters()
 	log.Printf("DEBUG: ListPrinters - GetSyncedPrinters() returned %d printers", len(printers))
 
-	log.Printf("INFO: ListPrinters called - Partner: %s, Printer count from partner agent: %d", user.ID, len(printers))
+	log.Printf("INFO: ListPrinters called - Partner authorized, Printer count from partner agent: %d", len(printers))
 
 	// Print the entire printer list being sent to frontend
 	if len(printers) > 0 {
@@ -277,7 +269,7 @@ func (h *PrintHandler) ListPrinters(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WARNING: Printers list was nil, returning empty array")
 	}
 
-	log.Printf("SUCCESS: Sending printer list to frontend - Partner: %s, Count: %d", user.ID, len(printers))
+	log.Printf("SUCCESS: Sending printer list to frontend - Count: %d", len(printers))
 
 	// Prepare response - return EXACTLY what partner agent sent
 	response := map[string]interface{}{
@@ -299,6 +291,6 @@ func (h *PrintHandler) ListPrinters(w http.ResponseWriter, r *http.Request) {
 
 	h.sendJSONResponse(w, http.StatusOK, response)
 
-	log.Printf("SUCCESS: Printer list sent to frontend - Partner: %s, Count: %d (EXACTLY as received from partner agent)", user.ID, len(printers))
+	log.Printf("SUCCESS: Printer list sent to frontend - Count: %d (EXACTLY as received from partner agent)", len(printers))
 }
 

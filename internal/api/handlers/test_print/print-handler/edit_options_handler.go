@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
 	"print-pro-backend/internal/models/printjob"
-	"strconv"
 )
 
 // EditPrintJobOptionsRequest represents the request to edit print job options
@@ -64,13 +63,8 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 
 	ctx := r.Context()
 
-	// Get account_id from user.ID
-	accountID, err := strconv.ParseInt(user.ID, 10, 64)
-	if err != nil {
-		log.Printf("ERROR: Failed to parse user ID '%s' - %v", user.ID, err)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "Invalid account ID format")
-		return
-	}
+	// Get account_email from user.ID (user.ID is the email)
+	accountEmail := user.ID
 
 	// Get the print job from database to verify ownership
 	printJob, err := h.printJobRepo.GetByFilename(ctx, req.Filename)
@@ -81,46 +75,55 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 	}
 
 	// SECURITY: Verify ownership based on user type
-	var partnerID int64
+	var partnerEmail string
 	if user.UserType == "partner" {
 		// For partners: verify file belongs to their shop
-		partnerProfile, err := h.partnerProfileRepo.GetByAccountID(ctx, accountID)
+		partnerProfile, err := h.partnerProfileRepo.GetByAccountEmail(ctx, accountEmail)
 		if err != nil {
-			log.Printf("ERROR: Partner profile not found for account_id: %d - %v", accountID, err)
+			log.Printf("ERROR: Partner profile not found - %v", err)
 			h.sendErrorResponse(w, http.StatusNotFound, "Partner profile not found", "Partner profile not found for this account")
 			return
 		}
 
-		partnerID = partnerProfile.ID
-		log.Printf("INFO: Edit request - Partner: %s (partner_id: %d), Filename: %s", user.ID, partnerID, req.Filename)
+		partnerEmail = partnerProfile.PartnerEmail
+		log.Printf("INFO: Edit request - Partner authorized, Filename: %s", req.Filename)
 
 		// SECURITY: Verify the print job belongs to this partner's shop
-		if printJob.PartnerID != partnerID {
-			log.Printf("ERROR: SECURITY - Partner %d trying to edit file belonging to partner %d - Filename: %s", 
-				partnerID, printJob.PartnerID, req.Filename)
+		if printJob.PartnerEmail == nil || *printJob.PartnerEmail != partnerEmail {
+			log.Printf("ERROR: SECURITY - Partner trying to edit file belonging to different partner - Filename: %s", req.Filename)
 			h.sendErrorResponse(w, http.StatusForbidden, "Access denied", "You do not have permission to edit this file")
 			return
 		}
 	} else if user.UserType == "customer" {
 		// For customers: verify file belongs to them
-		log.Printf("INFO: Edit request - Customer: %s (account_id: %d), Filename: %s", user.ID, accountID, req.Filename)
+		log.Printf("INFO: Edit request - Customer authorized, Filename: %s", req.Filename)
 
 		// SECURITY: Verify the print job belongs to this customer
-		if printJob.AccountID == nil || *printJob.AccountID != accountID {
-			log.Printf("ERROR: SECURITY - Customer %d trying to edit file belonging to account %v - Filename: %s", 
-				accountID, printJob.AccountID, req.Filename)
+		if printJob.CustomerEmail == nil || *printJob.CustomerEmail != accountEmail {
+			log.Printf("ERROR: SECURITY - Customer trying to edit file belonging to different account - Filename: %s", req.Filename)
 			h.sendErrorResponse(w, http.StatusForbidden, "Access denied", "You do not have permission to edit this file")
 			return
 		}
 
-		// Use the file's partner_id for the update (customer's file belongs to a specific shop)
-		partnerID = printJob.PartnerID
+		// Use the file's partner_email for the update (customer's file belongs to a specific shop)
+		if printJob.PartnerEmail == nil {
+			log.Printf("ERROR: Print job has no partner_email - Filename: %s", req.Filename)
+			h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Print job has no associated shop")
+			return
+		}
+		partnerEmail = *printJob.PartnerEmail
 		
 		// SECURITY: Customers cannot set delete_after_print - only partners can control this
 		if req.DeleteAfterPrint != nil {
-			log.Printf("WARNING: Customer %d attempted to set delete_after_print - ignoring this field", accountID)
+			log.Printf("WARNING: Customer attempted to set delete_after_print - ignoring this field")
 			req.DeleteAfterPrint = nil // Ignore customer's attempt to set this
 		}
+	}
+
+	// For customers, pass accountEmail for additional security check
+	var accountEmailPtr *string
+	if user.UserType == "customer" {
+		accountEmailPtr = &accountEmail
 	}
 
 	// Validate num_copies if provided
@@ -182,12 +185,6 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 
 	// Update print job options
 	// Only update fields that are provided (non-nil)
-	// For customers, pass accountID for additional security check
-	var accountIDPtr *int64
-	if user.UserType == "customer" {
-		accountIDPtr = &accountID
-	}
-	
 	// Extract page options from page_options structure
 	var startPagePtr *int
 	var endPagePtr *int
@@ -236,7 +233,7 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 		validatedCropOptions = validated
 	}
 	
-	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerID, accountIDPtr, req.Color, req.NumCopies, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPagesPtr, skipPagesPtr, req.BackToBack, req.DeleteAfterPrint, validatedPrintType, validatedCropOptions)
+	err = h.printJobRepo.UpdatePrintOptions(ctx, req.Filename, partnerEmail, accountEmailPtr, req.Color, req.NumCopies, startPagePtr, endPagePtr, pageFilterTypePtr, individualColorPagesPtr, skipPagesPtr, req.BackToBack, req.DeleteAfterPrint, validatedPrintType, validatedCropOptions)
 	if err != nil {
 		log.Printf("ERROR: Failed to update print job options for '%s' - %v", req.Filename, err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to update print job options")
@@ -281,17 +278,22 @@ func (h *PrintHandler) EditPrintJobOptions(w http.ResponseWriter, r *http.Reques
 				log.Printf("WARNING: Failed to recalculate cost for completed print job - %v", err)
 			} else {
 				// Store cost in job_cost table
-				err = h.jobCostRepo.CreateOrUpdate(ctx, updatedJob.ID, jobCost)
-				if err != nil {
-					log.Printf("WARNING: Failed to update job cost - %v", err)
+				// Note: job_cost uses account_email as PK, so we need the customer's email
+				if updatedJob.CustomerEmail == nil {
+					log.Printf("WARNING: Cannot store job cost - print job has no customer_email")
 				} else {
-					// Update total_cost in print_jobs table
-					err = h.jobCostRepo.UpdateTotalCostInPrintJob(ctx, updatedJob.ID, jobCost.TotalCost)
+					err = h.jobCostRepo.CreateOrUpdate(ctx, *updatedJob.CustomerEmail, updatedJob.ID, jobCost)
 					if err != nil {
-						log.Printf("WARNING: Failed to update total_cost in print_jobs - %v", err)
+						log.Printf("WARNING: Failed to update job cost - %v", err)
 					} else {
-						log.Printf("SUCCESS: Cost recalculated for completed job - Total: $%.2f (Color: %d pages, B&W: %d pages, Copies: %d)", 
-							jobCost.TotalCost, jobCost.ColorPages, jobCost.BlackWhitePages, jobCost.NumCopies)
+						// Update total_cost in print_jobs table
+						err = h.jobCostRepo.UpdateTotalCostInPrintJob(ctx, updatedJob.ID, jobCost.TotalCost)
+						if err != nil {
+							log.Printf("WARNING: Failed to update total_cost in print_jobs - %v", err)
+						} else {
+							log.Printf("SUCCESS: Cost recalculated for completed job - Total: $%.2f (Color: %d pages, B&W: %d pages, Copies: %d)", 
+								jobCost.TotalCost, jobCost.ColorPages, jobCost.BlackWhitePages, jobCost.NumCopies)
+						}
 					}
 				}
 			}

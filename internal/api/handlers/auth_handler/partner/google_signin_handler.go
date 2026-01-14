@@ -80,7 +80,7 @@ func (h *GoogleSignInHandler) HandleGoogleSignIn(w http.ResponseWriter, r *http.
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to register/login user", err.Error())
 		return
 	}
-	log.Printf("✅ GOOGLE PARTNER: User registered/logged in - ID: %s, UserType: %s", registeredUser.ID, registeredUser.UserType)
+	log.Printf("✅ GOOGLE PARTNER: User registered/logged in - UserType: %s", registeredUser.UserType)
 
 	// VALIDATION: Only allow partners to login through this endpoint
 	if registeredUser.UserType != account.UserTypePartner {

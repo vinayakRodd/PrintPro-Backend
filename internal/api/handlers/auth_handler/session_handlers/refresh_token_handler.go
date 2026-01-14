@@ -79,7 +79,7 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid or expired refresh token")
 		return
 	}
-	log.Printf("✅ REFRESH: Refresh token JWT validated successfully for user: %s", claims.UserID)
+	log.Printf("✅ REFRESH: Refresh token JWT validated successfully")
 
 	// Verify refresh token exists in Redis (for revocation check)
 	log.Printf("🔍 REFRESH: Checking refresh token in Redis...")
@@ -179,7 +179,7 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	http.SetCookie(w, refreshCookie)
 	log.Printf("✅ REFRESH: New refresh token cookie set")
 
-	log.Printf("✅ REFRESH: New access token generated successfully for user: %s", claims.UserID)
+	log.Printf("✅ REFRESH: New access token generated successfully")
 	log.Printf("🎉 REFRESH: Token refresh completed with rotation - user can continue without re-login")
 	// SECURITY NOTE: newAccessToken and newRefreshToken contain sensitive data - never log them, only return in response
 

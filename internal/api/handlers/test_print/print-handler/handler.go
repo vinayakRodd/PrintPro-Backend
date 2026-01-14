@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
-	"strconv"
 	"strings"
 )
 
@@ -100,26 +99,24 @@ func (h *PrintHandler) PrintFile(w http.ResponseWriter, r *http.Request) {
 	// OPTIMIZATION: Get printer_id directly from authenticated user (fast, single query)
 	// No need to query print_job first - we already know the partner from auth
 	var targetPrinterID string
-	accountID, err := strconv.ParseInt(user.ID, 10, 64)
-	if err == nil {
-		// Get partner profile directly from account_id (we already have user.ID)
-		partnerProfile, err := h.partnerProfileRepo.GetByAccountID(ctx, accountID)
-		if err == nil && partnerProfile != nil {
-			targetPrinterID = partnerProfile.PrinterID
-			log.Printf("DEBUG: Found printer_id '%s' for partner account_id=%d", targetPrinterID, accountID)
-		}
+	accountEmail := user.ID
+	// Get partner profile directly from account_email (we already have user.ID which is email)
+	partnerProfile, err := h.partnerProfileRepo.GetByAccountEmail(ctx, accountEmail)
+	if err == nil && partnerProfile != nil {
+		targetPrinterID = partnerProfile.PrinterID
+		log.Printf("DEBUG: Found printer_id '%s' for partner", targetPrinterID)
 	}
 	
 	// OPTIMIZATION: Queue file in Redis FIRST (fast operation)
-	log.Printf("INFO: Partner requested print - Queueing file in Redis - File: %s, Printer: %s, Partner: %s", pdfFileName, req.Printer, user.ID)
+	log.Printf("INFO: Partner requested print - Queueing file in Redis - File: %s, Printer: %s", pdfFileName, req.Printer)
 	
 	if err := h.agentHandler.MoveToProcessing(pdfFileName); err != nil {
-		log.Printf("ERROR: Failed to queue file in Redis: %v - File: %s, Partner: %s", err, pdfFileName, user.ID)
+		log.Printf("ERROR: Failed to queue file in Redis: %v - File: %s", err, pdfFileName)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "File error", "Failed to queue file: "+err.Error())
 		return
 	}
 	
-	log.Printf("SUCCESS: File queued in Redis ready queue - Partner: %s, File: %s", user.ID, pdfFileName)
+	log.Printf("SUCCESS: File queued in Redis ready queue - File: %s", pdfFileName)
 	
 	// OPTIMIZATION: Send WebSocket notification IMMEDIATELY (don't wait for anything)
 	// Use whatever printer_id the agent is actually connected with, not the database value
@@ -223,7 +220,7 @@ func (h *PrintHandler) QueueFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("SUCCESS: File queued for agent - Partner: %s, File: %s (agent can now fetch)", user.ID, filename)
+	log.Printf("SUCCESS: File queued for agent - File: %s (agent can now fetch)", filename)
 
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"success":  true,

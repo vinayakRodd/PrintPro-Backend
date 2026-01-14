@@ -2,7 +2,6 @@ package customer
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -100,7 +99,7 @@ func (h *RegisterHandler) HandleRegister(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Step 1: Create account in accounts table
-	accountRecord, err := h.accountRepository.Create(ctx, email, string(hashedPassword), account.UserTypeCustomer)
+	accountRecord, err := h.accountRepository.Create(ctx, email, string(hashedPassword), account.UserTypeCustomer, nil)
 	if err != nil {
 		log.Printf("ERROR: Failed to create account in accounts table - %v", err)
 		log.Printf("ERROR: UserType: %s", account.UserTypeCustomer)
@@ -109,18 +108,18 @@ func (h *RegisterHandler) HandleRegister(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Step 2: Create customer profile
-	_, err = h.customerProfileRepository.Create(ctx, accountRecord.ID, "")
+	_, err = h.customerProfileRepository.Create(ctx, accountRecord.Email, "")
 	if err != nil {
 		log.Printf("ERROR: Failed to create customer profile - %v", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to create customer profile", err.Error())
 		return
 	}
 
-	log.Printf("SUCCESS: Customer registered - Account ID: %d", accountRecord.ID)
+	log.Printf("SUCCESS: Customer registered successfully")
 
 	// Convert account to auth user model
 	registeredUser := &models.User{
-		ID:        fmt.Sprintf("%d", accountRecord.ID),
+		ID:        accountRecord.Email, // Use email as ID
 		Email:     accountRecord.Email,
 		Name:      accountRecord.Email, // Use email as display name for customers
 		UserType:  accountRecord.UserType, // Set user_type from account (should be "customer")

@@ -2,7 +2,6 @@ package partner
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -80,18 +79,18 @@ func (h *LoginHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Account found - ID: %d, UserType: %s", accountRecord.ID, accountRecord.UserType)
+	log.Printf("Account found - UserType: %s", accountRecord.UserType)
 
 	// VALIDATION: Only allow partners to login through this endpoint
 	if accountRecord.UserType != account.UserTypePartner {
-		log.Printf("ERROR: Attempted partner login with non-partner account - UserType: %s", accountRecord.UserType)
+		log.Printf("ERROR: Attempted partner login with non-partner account")
 		h.sendErrorResponse(w, http.StatusForbidden, "Invalid account type", "This email is registered as a customer. Please use the customer login.")
 		return
 	}
 
 	// Check if account is OAuth user (can't login with password)
 	if accountRecord.PasswordHash == "oauth_google" {
-		log.Printf("ERROR: Attempted password login for OAuth user - UserType: %s", accountRecord.UserType)
+		log.Printf("ERROR: Attempted password login for OAuth user")
 		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid login method", "This partner account uses Google Sign-In. Please use Google to sign in.")
 		return
 	}
@@ -113,11 +112,11 @@ func (h *LoginHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("SUCCESS: Partner password verified - authentication successful")
+	log.Printf("SUCCESS: Partner authenticated successfully - partner authorized")
 
 	// Convert account to auth user model
 	authUser := &models.User{
-		ID:        fmt.Sprintf("%d", accountRecord.ID),
+		ID:        accountRecord.Email, // Use email as ID
 		Email:     accountRecord.Email,
 		Name:      accountRecord.Email, // Will be updated based on profile if needed
 		UserType:  accountRecord.UserType, // Set user_type from account (should be "partner")

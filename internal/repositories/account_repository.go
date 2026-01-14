@@ -24,27 +24,9 @@ func NewAccountRepository(db *pgxpool.Pool) *AccountRepository {
 func (r *AccountRepository) GetByEmail(ctx context.Context, email string) (*account.Account, error) {
 	var a account.Account
 	err := r.db.QueryRow(ctx,
-		"SELECT id, email, password_hash, user_type, created_at FROM accounts WHERE email = $1",
+		"SELECT email, password_hash, user_type, created_at, username FROM accounts WHERE email = $1",
 		email,
-	).Scan(&a.ID, &a.Email, &a.PasswordHash, &a.UserType, &a.CreatedAt)
-
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("account not found")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get account: %w", err)
-	}
-
-	return &a, nil
-}
-
-// GetByID retrieves an account by ID
-func (r *AccountRepository) GetByID(ctx context.Context, id int64) (*account.Account, error) {
-	var a account.Account
-	err := r.db.QueryRow(ctx,
-		"SELECT id, email, password_hash, user_type, created_at FROM accounts WHERE id = $1",
-		id,
-	).Scan(&a.ID, &a.Email, &a.PasswordHash, &a.UserType, &a.CreatedAt)
+	).Scan(&a.Email, &a.PasswordHash, &a.UserType, &a.CreatedAt, &a.Username)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("account not found")
@@ -57,15 +39,15 @@ func (r *AccountRepository) GetByID(ctx context.Context, id int64) (*account.Acc
 }
 
 // Create creates a new account in the database
-// Returns the created account with the generated ID
-func (r *AccountRepository) Create(ctx context.Context, email, passwordHash, userType string) (*account.Account, error) {
+// Returns the created account (email is the primary key)
+func (r *AccountRepository) Create(ctx context.Context, email, passwordHash, userType string, username *string) (*account.Account, error) {
 	var a account.Account
 	err := r.db.QueryRow(ctx,
-		`INSERT INTO accounts (email, password_hash, user_type, created_at) 
-		 VALUES ($1, $2, $3, $4) 
-		 RETURNING id, email, password_hash, user_type, created_at`,
-		email, passwordHash, userType, time.Now(),
-	).Scan(&a.ID, &a.Email, &a.PasswordHash, &a.UserType, &a.CreatedAt)
+		`INSERT INTO accounts (email, password_hash, user_type, created_at, username) 
+		 VALUES ($1, $2, $3, $4, $5) 
+		 RETURNING email, password_hash, user_type, created_at, username`,
+		email, passwordHash, userType, time.Now(), username,
+	).Scan(&a.Email, &a.PasswordHash, &a.UserType, &a.CreatedAt, &a.Username)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create account: %w", err)

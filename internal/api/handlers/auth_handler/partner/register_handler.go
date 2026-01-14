@@ -2,7 +2,6 @@ package partner
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -105,7 +104,7 @@ func (h *RegisterHandler) HandleRegister(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Step 1: Create account in accounts table
-	accountRecord, err := h.accountRepository.Create(ctx, email, string(hashedPassword), account.UserTypePartner)
+	accountRecord, err := h.accountRepository.Create(ctx, email, string(hashedPassword), account.UserTypePartner, nil)
 	if err != nil {
 		log.Printf("ERROR: Failed to create account in accounts table - %v", err)
 		log.Printf("ERROR: UserType: %s", account.UserTypePartner)
@@ -114,19 +113,19 @@ func (h *RegisterHandler) HandleRegister(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Step 2: Create partner profile
-	_, err = h.partnerProfileRepository.Create(ctx, accountRecord.ID, strings.TrimSpace(req.ShopName), strings.TrimSpace(req.PrinterID))
+	_, err = h.partnerProfileRepository.Create(ctx, accountRecord.Email, strings.TrimSpace(req.ShopName), strings.TrimSpace(req.PrinterID))
 	if err != nil {
 		log.Printf("ERROR: Failed to create partner profile - %v", err)
-		log.Printf("ERROR: AccountID: %d, ShopName: %s", accountRecord.ID, req.ShopName)
+		log.Printf("ERROR: Failed to create partner profile - ShopName: %s", req.ShopName)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to create partner profile", err.Error())
 		return
 	}
 
-	log.Printf("SUCCESS: Partner registered - Account ID: %d", accountRecord.ID)
+	log.Printf("SUCCESS: Partner registered successfully - partner authorized")
 
 	// Convert account to auth user model
 	registeredUser := &models.User{
-		ID:        fmt.Sprintf("%d", accountRecord.ID),
+		ID:        accountRecord.Email, // Use email as ID
 		Email:     accountRecord.Email,
 		Name:      req.ShopName, // Use shop name as display name
 		UserType:  accountRecord.UserType, // Set user_type from account (should be "partner")

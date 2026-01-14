@@ -9,6 +9,7 @@ import (
 	"print-pro-backend/internal/api/handlers/auth_handler/shared"
 	"print-pro-backend/internal/config"
 	"print-pro-backend/internal/infrastructure"
+	"print-pro-backend/internal/middleware/auth_middleware"
 	"print-pro-backend/internal/repositories"
 	"print-pro-backend/internal/services/email"
 	"print-pro-backend/internal/services/google_auth"
@@ -179,6 +180,51 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // GetMe delegates to me handler
 func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	h.meHandler.HandleGetMe(w, r, h.sendJSONResponse, h.sendErrorResponse)
+}
+
+// GetPartnerMe returns the partner profile information for the authenticated partner
+func (h *AuthHandler) GetPartnerMe(w http.ResponseWriter, r *http.Request) {
+	// Only allow GET requests
+	if r.Method != http.MethodGet {
+		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only GET method is allowed")
+		return
+	}
+
+	// Get authenticated user from context
+	user, ok := auth_middleware.GetUserFromContext(r)
+	if !ok {
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not found in session")
+		return
+	}
+
+	// Only partners can access this endpoint
+	if user.UserType != "partner" {
+		h.sendErrorResponse(w, http.StatusForbidden, "Forbidden", "This endpoint is only available for partners")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Get partner profile using the user's email (user.ID is the email)
+	partnerProfile, err := h.partnerProfileRepository.GetByAccountEmail(ctx, user.ID)
+	if err != nil {
+		h.sendErrorResponse(w, http.StatusNotFound, "Partner profile not found", "Partner profile not found for this account")
+		return
+	}
+
+	// Return partner profile with email
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Partner profile retrieved successfully",
+		"profile": map[string]interface{}{
+			"partner_email": partnerProfile.PartnerEmail,
+			"shop_name":     partnerProfile.ShopName,
+			"printer_id":    partnerProfile.PrinterID,
+			"status":        partnerProfile.Status,
+		},
+	}
+
+	h.sendJSONResponse(w, http.StatusOK, response)
 }
 
 // CheckUserType delegates to me handler

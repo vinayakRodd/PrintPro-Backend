@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
-	"strconv"
 	"strings"
 )
 
@@ -70,20 +69,15 @@ func (h *PrintHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	filename = strings.ReplaceAll(filename, "/", "_")
 	filename = strings.ReplaceAll(filename, "\\", "_")
 
-	log.Printf("INFO: Delete request - Customer: %s, File: %s", user.ID, filename)
+	log.Printf("INFO: Delete request - Customer authorized, File: %s", filename)
 
 	ctx := r.Context()
 
-	// Get account_id from user.ID
-	accountID, err := strconv.ParseInt(user.ID, 10, 64)
-	if err != nil {
-		log.Printf("ERROR: Failed to parse user ID '%s' - %v", user.ID, err)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "Invalid account ID format")
-		return
-	}
+	// Get account_email from user.ID (user.ID is the email)
+	accountEmail := user.ID
 
 	// Step 1: Delete from database (only if file belongs to this customer)
-	if err := h.printJobRepo.DeleteByFilenameAndAccountID(ctx, filename, accountID); err != nil {
+	if err := h.printJobRepo.DeleteByFilenameAndAccountEmail(ctx, filename, accountEmail); err != nil {
 		log.Printf("ERROR: Failed to delete print job from database: %v", err)
 		h.sendErrorResponse(w, http.StatusNotFound, "File not found", "File not found or you don't have permission to delete it")
 		return
@@ -116,7 +110,7 @@ func (h *PrintHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 		log.Printf("INFO: Physical file not found (may have been deleted already) - File: %s", filename)
 	}
 
-	log.Printf("SUCCESS: File deleted completely - Customer: %s, File: %s", user.ID, filename)
+	log.Printf("SUCCESS: File deleted completely - File: %s", filename)
 
 	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
 		"success":  true,

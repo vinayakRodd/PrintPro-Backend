@@ -4,14 +4,14 @@ import "time"
 
 // Printer represents a printer in the database
 type Printer struct {
-	ID          int64     `db:"id" json:"id"`
-	PartnerID   int64     `db:"partner_id" json:"partner_id"`
-	PrinterName string    `db:"printer_name" json:"printer_name"`
-	SerialNumber string   `db:"serial_number" json:"serial_number"`
-	Status      string    `db:"status" json:"status"` // online, offline, etc.
-	LastSeen    time.Time `db:"last_seen" json:"last_seen"`
-	CreatedAt   time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
+	ID           int64     `db:"id" json:"id"` // Primary key (bigserial)
+	PartnerEmail *string   `db:"partner_email" json:"partner_email,omitempty"` // Nullable - partner account email
+	PrinterName  string    `db:"printer_name" json:"printer_name"`
+	SerialNumber string    `db:"serial_number" json:"serial_number"`
+	Status       string    `db:"status" json:"status"` // online, offline, etc.
+	LastSeen     time.Time `db:"last_seen" json:"last_seen"`
+	CreatedAt    time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt    time.Time `db:"updated_at" json:"updated_at"`
 }
 
 // CreatePrinterRequest represents the request to create a new printer

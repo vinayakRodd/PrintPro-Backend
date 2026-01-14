@@ -11,18 +11,17 @@ import (
 
 // ShopPreference represents a customer's shop preference
 type ShopPreference struct {
-	ID         int64     `db:"id" json:"id"`
-	CustomerID int64     `db:"customer_id" json:"customer_id"`
-	ShopID     int64     `db:"shop_id" json:"shop_id"`
-	CreatedAt  time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt  time.Time `db:"updated_at" json:"updated_at"`
+	ID          int64     `db:"id" json:"id"` // Primary key (serial)
+	CustomerEmail *string `db:"customer_email" json:"customer_email,omitempty"` // Nullable - customer account email
+	CreatedAt   time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt   time.Time `db:"updated_at" json:"updated_at"`
 }
 
 // ShopPreferenceWithShopName includes shop name for response
 type ShopPreferenceWithShopName struct {
-	ID       int64  `db:"id" json:"id"`
-	ShopID   int64  `db:"shop_id" json:"shop_id"`
-	ShopName string `db:"shop_name" json:"shop_name"`
+	ID           int64  `db:"id" json:"id"`
+	CustomerEmail *string `db:"customer_email" json:"customer_email,omitempty"`
+	ShopName     string `db:"shop_name" json:"shop_name"`
 }
 
 // ShopPreferenceRepository handles database operations for shop preferences
@@ -35,16 +34,16 @@ func NewShopPreferenceRepository(db *pgxpool.Pool) *ShopPreferenceRepository {
 	return &ShopPreferenceRepository{db: db}
 }
 
-// GetByCustomerID retrieves a shop preference by customer ID
-func (r *ShopPreferenceRepository) GetByCustomerID(ctx context.Context, customerID int64) (*ShopPreferenceWithShopName, error) {
+// GetByAccountEmail retrieves a shop preference by customer account email
+func (r *ShopPreferenceRepository) GetByAccountEmail(ctx context.Context, accountEmail string) (*ShopPreferenceWithShopName, error) {
 	var pref ShopPreferenceWithShopName
 	err := r.db.QueryRow(ctx,
-		`SELECT sp.id, sp.shop_id, pp.shop_name 
+		`SELECT sp.id, sp.customer_email, pp.shop_name 
 		 FROM shop_preferences sp
-		 INNER JOIN partner_profiles pp ON sp.shop_id = pp.id
-		 WHERE sp.customer_id = $1`,
-		customerID,
-	).Scan(&pref.ID, &pref.ShopID, &pref.ShopName)
+		 INNER JOIN partner_profiles pp ON sp.customer_email = pp.partner_email
+		 WHERE sp.customer_email = $1`,
+		accountEmail,
+	).Scan(&pref.ID, &pref.CustomerEmail, &pref.ShopName)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("shop preference not found")
@@ -57,13 +56,13 @@ func (r *ShopPreferenceRepository) GetByCustomerID(ctx context.Context, customer
 }
 
 // Upsert creates or updates a shop preference for a customer
-func (r *ShopPreferenceRepository) Upsert(ctx context.Context, customerID, shopID int64) error {
+func (r *ShopPreferenceRepository) Upsert(ctx context.Context, accountEmail string) error {
 	_, err := r.db.Exec(ctx,
-		`INSERT INTO shop_preferences (customer_id, shop_id, updated_at)
-		 VALUES ($1, $2, CURRENT_TIMESTAMP)
-		 ON CONFLICT (customer_id) 
-		 DO UPDATE SET shop_id = $2, updated_at = CURRENT_TIMESTAMP`,
-		customerID, shopID,
+		`INSERT INTO shop_preferences (customer_email, updated_at)
+		 VALUES ($1, CURRENT_TIMESTAMP)
+		 ON CONFLICT (customer_email) 
+		 DO UPDATE SET updated_at = CURRENT_TIMESTAMP`,
+		accountEmail,
 	)
 
 	if err != nil {
@@ -73,11 +72,11 @@ func (r *ShopPreferenceRepository) Upsert(ctx context.Context, customerID, shopI
 	return nil
 }
 
-// DeleteByCustomerID deletes a shop preference by customer ID
-func (r *ShopPreferenceRepository) DeleteByCustomerID(ctx context.Context, customerID int64) error {
+// DeleteByAccountEmail deletes a shop preference by customer account email
+func (r *ShopPreferenceRepository) DeleteByAccountEmail(ctx context.Context, accountEmail string) error {
 	result, err := r.db.Exec(ctx,
-		"DELETE FROM shop_preferences WHERE customer_id = $1",
-		customerID,
+		"DELETE FROM shop_preferences WHERE customer_email = $1",
+		accountEmail,
 	)
 
 	if err != nil {
@@ -89,4 +88,20 @@ func (r *ShopPreferenceRepository) DeleteByCustomerID(ctx context.Context, custo
 	}
 
 	return nil
+}
+
+// Deprecated methods for backward compatibility
+// GetByCustomerID is deprecated - use GetByAccountEmail instead
+func (r *ShopPreferenceRepository) GetByCustomerID(ctx context.Context, customerID int64) (*ShopPreferenceWithShopName, error) {
+	return nil, fmt.Errorf("GetByCustomerID is deprecated, use GetByAccountEmail instead")
+}
+
+// Upsert with customerID and shopID is deprecated - use Upsert with accountEmail instead
+func (r *ShopPreferenceRepository) UpsertOld(ctx context.Context, customerID, shopID int64) error {
+	return fmt.Errorf("UpsertOld is deprecated, use Upsert with accountEmail instead")
+}
+
+// DeleteByCustomerID is deprecated - use DeleteByAccountEmail instead
+func (r *ShopPreferenceRepository) DeleteByCustomerID(ctx context.Context, customerID int64) error {
+	return fmt.Errorf("DeleteByCustomerID is deprecated, use DeleteByAccountEmail instead")
 }
