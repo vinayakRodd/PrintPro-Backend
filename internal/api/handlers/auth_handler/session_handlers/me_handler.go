@@ -1,17 +1,23 @@
 package session_handlers
 
 import (
+	"log"
 	"net/http"
 	"print-pro-backend/internal/middleware/auth_middleware"
 	"print-pro-backend/internal/models"
+	"print-pro-backend/internal/repositories"
 )
 
 // MeHandler handles user profile and user type requests
-type MeHandler struct{}
+type MeHandler struct {
+	accountRepository *repositories.AccountRepository
+}
 
 // NewMeHandler creates a new MeHandler instance
-func NewMeHandler() *MeHandler {
-	return &MeHandler{}
+func NewMeHandler(accountRepository *repositories.AccountRepository) *MeHandler {
+	return &MeHandler{
+		accountRepository: accountRepository,
+	}
 }
 
 // HandleGetMe returns the current authenticated user
@@ -21,6 +27,17 @@ func (h *MeHandler) HandleGetMe(w http.ResponseWriter, r *http.Request, sendJSON
 	if !ok {
 		sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not found in session")
 		return
+	}
+
+	// Fetch username from accounts table using user's email
+	ctx := r.Context()
+	account, err := h.accountRepository.GetByEmail(ctx, user.Email)
+	if err != nil {
+		log.Printf("WARNING: Failed to fetch username for email %s - %v", user.Email, err)
+		// Continue anyway - username is optional
+	} else {
+		// Update user's username from account
+		user.Username = account.Username
 	}
 
 	// Return user information

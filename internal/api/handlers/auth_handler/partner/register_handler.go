@@ -135,6 +135,7 @@ func (h *RegisterHandler) HandleRegister(w http.ResponseWriter, r *http.Request)
 		ID:        accountRecord.Email, // Use email as ID
 		Email:     accountRecord.Email,
 		Name:      req.ShopName, // Use shop name as display name
+		Username:  accountRecord.Username, // Username from accounts table
 		UserType:  accountRecord.UserType, // Set user_type from account (should be "partner")
 		Provider:  "email",
 		CreatedAt: accountRecord.CreatedAt,
