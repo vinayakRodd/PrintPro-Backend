@@ -13,6 +13,7 @@ type User struct {
 	ID        string    `json:"id"`
 	Email     string    `json:"email"`
 	Name      string    `json:"name"`
+	Username  *string   `json:"username,omitempty"` // Username from accounts table
 	Picture   string    `json:"picture,omitempty"`
 	Provider  string    `json:"provider"` // e.g., "google"
 	UserType  string    `json:"user_type"` // "partner" or "customer"

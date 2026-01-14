@@ -181,6 +181,7 @@ func (s *GoogleAuthService) RegisterOrLoginUser(ctx context.Context, googleUser 
 		ID:        accountRecord.Email, // Use email as ID
 		Email:     accountRecord.Email,
 		Name:      googleUser.Name, // Use name from Google token
+		Username:  accountRecord.Username, // Username from accounts table (may have been updated above)
 		UserType:  accountRecord.UserType, // Auto-detected from accounts table
 		Provider:  "google",
 		CreatedAt: accountRecord.CreatedAt,

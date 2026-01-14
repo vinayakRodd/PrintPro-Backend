@@ -72,7 +72,7 @@ func NewAuthHandler(
 		tokenHelper := session_handlers.NewTokenHelper(jwtService, sessionService, cfg)
 		refreshTokenHandler := session_handlers.NewRefreshTokenHandler(jwtService, sessionService, tokenHelper, cfg)
 		logoutHandler := session_handlers.NewLogoutHandler(sessionService, cfg)
-		meHandler := session_handlers.NewMeHandler()
+		meHandler := session_handlers.NewMeHandler(accountRepository)
 	
 	handler := &AuthHandler{
 		googleAuthService:         googleAuthService,

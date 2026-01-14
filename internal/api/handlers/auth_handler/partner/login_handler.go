@@ -119,6 +119,7 @@ func (h *LoginHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		ID:        accountRecord.Email, // Use email as ID
 		Email:     accountRecord.Email,
 		Name:      accountRecord.Email, // Will be updated based on profile if needed
+		Username:  accountRecord.Username, // Username from accounts table
 		UserType:  accountRecord.UserType, // Set user_type from account (should be "partner")
 		Provider:  "email",
 		CreatedAt: accountRecord.CreatedAt,
