@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -148,6 +147,7 @@ func (a *Application) RegisterRoutes() {
 	http.HandleFunc("/api/partner-agent/fetch-job", cors.CORS(optionalAuth(agentHandler.FetchJob)))
 	http.HandleFunc("/api/partner-agent/confirm-print", cors.CORS(optionalAuth(agentHandler.ConfirmPrint)))
 	http.HandleFunc("/api/partner-agent/confirm", cors.CORS(optionalAuth(agentHandler.ConfirmPrint))) // Keep for backward compatibility
+	http.HandleFunc("/api/partner-agent/check-status", cors.CORS(optionalAuth(agentHandler.CheckJobStatus))) // Check job status endpoint
 	http.HandleFunc("/api/partner-agent/sync-printers", cors.CORS(optionalAuth(agentHandler.SyncPrinters)))
 	http.HandleFunc("/api/partner-agent/reprint", cors.CORS(optionalAuth(agentHandler.Reprint))) // Reprint endpoint - clears Redis and resets status
 

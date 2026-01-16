@@ -44,14 +44,53 @@ func (h *AgentHandler) ConfirmPrint(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Update database status to "completed" (fast operation, no file moves)
+	// Update database status based on agent's reported status (completed or failed)
+	// Default to "completed" for backward compatibility if status not provided
+	statusToUpdate := req.Status
+	if statusToUpdate == "" {
+		statusToUpdate = "completed"  // Default for backward compatibility
+	}
+	
+	// Only allow "completed" or "failed" status
+	if statusToUpdate != "completed" && statusToUpdate != "failed" {
+		log.Printf("WARNING: Invalid status '%s' received, defaulting to 'failed'", statusToUpdate)
+		statusToUpdate = "failed"
+	}
+	
 	if h.printJobRepo != nil {
-		if err := h.printJobRepo.UpdateStatus(ctx, req.Filename, "completed"); err != nil {
+		if err := h.printJobRepo.UpdateStatus(ctx, req.Filename, statusToUpdate); err != nil {
 			log.Printf("WARNING: Failed to update print job status: %v", err)
 			// Continue - Redis cleanup is more important
 		} else {
-			log.Printf("INFO: Print job status updated to 'completed' - File: %s", req.Filename)
+			if statusToUpdate == "failed" {
+				log.Printf("INFO: Print job status updated to 'failed' - File: %s", req.Filename)
+			} else {
+				log.Printf("INFO: Print job status updated to 'completed' - File: %s", req.Filename)
+			}
 		}
+	}
+	
+	// Only calculate cost if job completed successfully
+	if statusToUpdate != "completed" {
+		log.Printf("INFO: Skipping cost calculation - job status is '%s'", statusToUpdate)
+		// Still clean up Redis queue even if failed
+		if h.redisClient != nil {
+			processingQueueKey := "printer:queue:processing"
+			removed, err := h.redisClient.LREM(ctx, processingQueueKey, 1, req.Filename)
+			if err != nil {
+				log.Printf("ERROR: Failed to remove filename from processing queue: %v", err)
+			} else if removed > 0 {
+				log.Printf("INFO: Filename removed from processing queue - File: %s", req.Filename)
+			}
+		}
+		log.Printf("SUCCESS: Print failure confirmed - File: %s (status updated to 'failed', Redis cleaned)", req.Filename)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":   "success",
+			"message":  "Print failure confirmed",
+			"filename": req.Filename,
+		})
+		return
 	}
 
 	// Calculate and store cost now that job is completed
