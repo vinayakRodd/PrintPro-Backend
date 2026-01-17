@@ -11,6 +11,7 @@ import (
 type JobCost struct {
 	PrintJobID      int64      `db:"print_job_id" json:"print_job_id"`   // Primary key, references print_jobs(id)
 	AccountEmail    string     `db:"customer_email" json:"customer_email"` // Foreign key, references accounts(email)
+	PartnerEmail    *string    `db:"partner_email" json:"partner_email,omitempty"` // Nullable - partner account email (shop owner), references print_jobs(partner_email)
 	TotalPages      int        `db:"total_pages" json:"total_pages"`           // Total pages in document
 	PagesToPrint    int        `db:"pages_to_print" json:"pages_to_print"`     // Pages that will be printed (after filters)
 	ColorPages      int        `db:"color_pages" json:"color_pages"`           // Number of color pages (individual_color_pages_count)

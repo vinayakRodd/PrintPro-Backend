@@ -62,6 +62,7 @@ type PrintRequest struct {
 type JobCostDTO struct {
 	JobID          int64   `json:"job_id"`           // print_job_id (renamed for security)
 	Username       *string `json:"username,omitempty"` // username from accounts table (fetched using customer_email)
+	PartnerEmail   *string `json:"partner_email,omitempty"` // partner email (shop owner)
 	PageInfo       PageInfoDTO `json:"page_info"`    // Grouped page information
 	Pricing        PricingDTO  `json:"pricing"`      // Grouped pricing information
 	Timestamp      TimestampDTO `json:"timestamp"`   // Grouped timestamp information

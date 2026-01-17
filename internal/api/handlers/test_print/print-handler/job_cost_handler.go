@@ -28,8 +28,9 @@ func toJobCostDTO(cost *jobcost.JobCost, username *string) JobCostDTO {
 	}
 
 	return JobCostDTO{
-		JobID:      cost.PrintJobID,      // Renamed from print_job_id
-		Username:   username,             // Username from accounts table
+		JobID:       cost.PrintJobID,      // Renamed from print_job_id
+		Username:    username,             // Username from accounts table
+		PartnerEmail: cost.PartnerEmail,   // Partner email (shop owner)
 		PageInfo: PageInfoDTO{
 			TotalPages:      cost.TotalPages,
 			PagesToPrint:    cost.PagesToPrint,
@@ -65,9 +66,10 @@ func (h *PrintHandler) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Parse query parameters for month/year filtering (optional)
+	// Parse query parameters for month/year and partner_email filtering (optional)
 	yearParam := r.URL.Query().Get("year")
 	monthParam := r.URL.Query().Get("month")
+	partnerEmailParam := r.URL.Query().Get("partner_email")
 
 	var costs []jobcost.JobCost
 	var err error
@@ -75,6 +77,7 @@ func (h *PrintHandler) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 	var shouldCache bool
 
 	// If both year and month are provided, filter by month/year with caching
+	// If partner_email is also provided, filter by month/year AND partner_email
 	if yearParam != "" && monthParam != "" {
 		year, errYear := strconv.Atoi(yearParam)
 		month, errMonth := strconv.Atoi(monthParam)
@@ -96,8 +99,18 @@ func (h *PrintHandler) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		
-		// Create cache key for this month/year
-		cacheKey = fmt.Sprintf("job_costs:%d:%d", year, month)
+		// Validate partner_email if provided
+		if partnerEmailParam != "" && len(partnerEmailParam) == 0 {
+			h.sendErrorResponse(w, http.StatusBadRequest, "Invalid partner_email", "partner_email cannot be empty")
+			return
+		}
+		
+		// Create cache key for this month/year (include partner_email if provided)
+		if partnerEmailParam != "" {
+			cacheKey = fmt.Sprintf("job_costs:%d:%d:%s", year, month, partnerEmailParam)
+		} else {
+			cacheKey = fmt.Sprintf("job_costs:%d:%d", year, month)
+		}
 		shouldCache = true
 		
 		// Try to get from cache first
@@ -107,11 +120,17 @@ func (h *PrintHandler) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 				// Cache hit - unmarshal and return
 				var cachedCosts []jobcost.JobCost
 				if err := json.Unmarshal([]byte(cachedData), &cachedCosts); err == nil {
-					log.Printf("CACHE HIT: Retrieved %d job costs from cache for %d/%d", len(cachedCosts), month, year)
+					if partnerEmailParam != "" {
+						log.Printf("CACHE HIT: Retrieved %d job costs from cache for %d/%d (partner: %s)", len(cachedCosts), month, year, partnerEmailParam)
+					} else {
+						log.Printf("CACHE HIT: Retrieved %d job costs from cache for %d/%d", len(cachedCosts), month, year)
+					}
 					costs = cachedCosts
 					
-					// Also cache previous month in background (for faster access)
-					go h.cachePreviousMonth(ctx, year, month)
+					// Also cache previous month in background (only if no partner_email filter)
+					if partnerEmailParam == "" {
+						go h.cachePreviousMonth(ctx, year, month)
+					}
 					
 					// Skip database query and go to username fetching
 					goto fetchUsernames
@@ -124,11 +143,23 @@ func (h *PrintHandler) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 		}
 		
 		// Cache miss or Redis unavailable - fetch from database
-		costs, err = h.jobCostRepo.GetByMonth(ctx, year, month)
-		if err != nil {
-			log.Printf("ERROR: Failed to get job costs for month/year - %v", err)
-			h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to retrieve job costs", err.Error())
-			return
+		// If partner_email is provided, filter by month/year AND partner_email
+		if partnerEmailParam != "" {
+			costs, err = h.jobCostRepo.GetByMonthAndPartnerEmail(ctx, year, month, partnerEmailParam)
+			if err != nil {
+				log.Printf("ERROR: Failed to get job costs for month/year/partner_email - %v", err)
+				h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to retrieve job costs", err.Error())
+				return
+			}
+			log.Printf("SUCCESS: Retrieved %d job costs for %d/%d (partner: %s)", len(costs), month, year, partnerEmailParam)
+		} else {
+			costs, err = h.jobCostRepo.GetByMonth(ctx, year, month)
+			if err != nil {
+				log.Printf("ERROR: Failed to get job costs for month/year - %v", err)
+				h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to retrieve job costs", err.Error())
+				return
+			}
+			log.Printf("SUCCESS: Retrieved %d job costs for %d/%d", len(costs), month, year)
 		}
 		
 		// Store in cache with 1 minute TTL
@@ -136,7 +167,11 @@ func (h *PrintHandler) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 			costsJSON, err := json.Marshal(costs)
 			if err == nil {
 				if err := h.redisClient.Set(ctx, cacheKey, costsJSON, 1*time.Minute); err == nil {
-					log.Printf("CACHE SET: Stored %d job costs in cache for %d/%d (TTL: 1 minute)", len(costs), month, year)
+					if partnerEmailParam != "" {
+						log.Printf("CACHE SET: Stored %d job costs in cache for %d/%d (partner: %s) (TTL: 1 minute)", len(costs), month, year, partnerEmailParam)
+					} else {
+						log.Printf("CACHE SET: Stored %d job costs in cache for %d/%d (TTL: 1 minute)", len(costs), month, year)
+					}
 				} else {
 					log.Printf("WARNING: Failed to store job costs in cache - %v", err)
 				}
@@ -144,11 +179,11 @@ func (h *PrintHandler) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 				log.Printf("WARNING: Failed to marshal job costs for caching - %v", err)
 			}
 			
-			// Also cache previous month in background (for faster access)
-			go h.cachePreviousMonth(ctx, year, month)
+			// Also cache previous month in background (only if no partner_email filter)
+			if partnerEmailParam == "" {
+				go h.cachePreviousMonth(ctx, year, month)
+			}
 		}
-		
-		log.Printf("SUCCESS: Retrieved %d job costs for %d/%d", len(costs), month, year)
 	} else {
 		// Fetch all job costs from the table (no filtering, no caching)
 		// Pass nil to GetAll to get all records
