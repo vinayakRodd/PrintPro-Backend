@@ -22,6 +22,7 @@ func NewPartnerAuthHandler(
 	googleAuthService *google_auth.GoogleAuthService,
 	otpService interface {
 		GenerateOTP(ctx context.Context, email string) (string, error)
+		MarkOTPEmailSent(ctx context.Context, email string) (bool, error)
 	},
 	emailService interface {
 		SendOTPEmail(email, otp string) error

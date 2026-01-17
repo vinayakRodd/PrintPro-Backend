@@ -25,16 +25,27 @@ func NewOTPService(redisClient *infrastructure.RedisClient) *OTPService {
 }
 
 // GenerateOTP generates a 6-digit OTP and stores it in Redis
+// If an OTP already exists for this email, it returns the existing OTP to prevent duplicate emails
 func (s *OTPService) GenerateOTP(ctx context.Context, email string) (string, error) {
-	log.Printf("Generating 6-digit OTP")
-	// Generate 6-digit OTP
+	otpKey := fmt.Sprintf("otp:%s", email)
+	
+	// Check if OTP already exists to prevent duplicate generation
+	log.Printf("Checking for existing OTP before generating new one")
+	existingOTP, err := s.redisClient.Get(ctx, otpKey)
+	if err == nil && existingOTP != "" {
+		// OTP already exists - return it to prevent duplicate email
+		log.Printf("Existing OTP found - reusing to prevent duplicate email generation")
+		return strings.TrimSpace(existingOTP), nil
+	}
+	
+	// No existing OTP - generate new one
+	log.Printf("No existing OTP found - generating new 6-digit OTP")
 	otp := generateRandomOTP(6)
 	log.Printf("OTP generated successfully")
 	
 	// Store OTP in Redis with email as key
-	otpKey := fmt.Sprintf("otp:%s", email)
 	log.Printf("Storing OTP in Redis")
-	err := s.redisClient.Set(ctx, otpKey, otp, s.otpTTL)
+	err = s.redisClient.Set(ctx, otpKey, otp, s.otpTTL)
 	if err != nil {
 		log.Printf("Failed to store OTP in Redis: %v", err)
 		return "", fmt.Errorf("failed to store OTP: %w", err)
@@ -96,6 +107,31 @@ func (s *OTPService) VerifyResetToken(ctx context.Context, email string) (bool, 
 func (s *OTPService) DeleteResetToken(ctx context.Context, email string) {
 	resetTokenKey := fmt.Sprintf("reset_token:%s", email)
 	s.redisClient.Delete(ctx, resetTokenKey)
+}
+
+// MarkOTPEmailSent marks that an email was sent for this OTP to prevent duplicate sends
+// Returns true if email was already sent (should skip sending), false if this is first send
+func (s *OTPService) MarkOTPEmailSent(ctx context.Context, email string) (bool, error) {
+	emailSentKey := fmt.Sprintf("otp:email_sent:%s", email)
+	
+	// Check if email was already sent (within last 2 minutes to prevent duplicates)
+	_, err := s.redisClient.Get(ctx, emailSentKey)
+	if err == nil {
+		// Email was already sent recently - skip sending
+		log.Printf("Email already sent for this OTP - skipping duplicate send")
+		return true, nil
+	}
+	
+	// Mark email as sent (2 minute TTL to prevent duplicate sends)
+	err = s.redisClient.Set(ctx, emailSentKey, "sent", 2*time.Minute)
+	if err != nil {
+		log.Printf("WARNING: Failed to mark email as sent (non-fatal): %v", err)
+		// Continue anyway - worst case is duplicate email
+		return false, nil
+	}
+	
+	log.Printf("Email send marked in Redis - will prevent duplicates for 2 minutes")
+	return false, nil
 }
 
 // generateRandomOTP generates a random N-digit OTP

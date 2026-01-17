@@ -48,7 +48,7 @@ func AuthMiddleware(sessionService *session.SessionService, jwtService *jwt.JWTS
 				return
 			}
 			
-			log.Printf("✅ AUTH: Access token validated successfully for user: %s (type: %s)", claims.UserID, claims.UserType)
+			log.Printf("✅ AUTH: Access token validated successfully - UserType: %s", claims.UserType)
 
 			// Create user object from JWT claims
 			user := &models.User{
