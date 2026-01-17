@@ -1,6 +1,7 @@
 package partner
 
 import (
+	"context"
 	"net/http"
 	"print-pro-backend/internal/api/handlers/auth_handler/shared"
 	"print-pro-backend/internal/repositories"
@@ -19,6 +20,12 @@ func NewPartnerAuthHandler(
 	accountRepository *repositories.AccountRepository,
 	partnerProfileRepository *repositories.PartnerProfileRepository,
 	googleAuthService *google_auth.GoogleAuthService,
+	otpService interface {
+		GenerateOTP(ctx context.Context, email string) (string, error)
+	},
+	emailService interface {
+		SendOTPEmail(email, otp string) error
+	},
 	tokenHelper shared.TokenHelper,
 	sendErrorResponse func(http.ResponseWriter, int, string, string),
 	sendJSONResponse func(http.ResponseWriter, int, interface{}),
@@ -26,6 +33,9 @@ func NewPartnerAuthHandler(
 	// Initialize partner handlers
 	loginHandler := NewLoginHandler(
 		accountRepository,
+		partnerProfileRepository,
+		otpService,
+		emailService,
 		tokenHelper,
 		sendErrorResponse,
 		sendJSONResponse,

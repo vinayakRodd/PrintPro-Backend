@@ -2,29 +2,46 @@ package session_handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 	"print-pro-backend/internal/config"
+	"print-pro-backend/internal/infrastructure"
+	"print-pro-backend/internal/repositories"
 	"print-pro-backend/internal/services/jwt"
 	"print-pro-backend/internal/services/session"
+	"github.com/redis/go-redis/v9"
 )
 
 // RefreshTokenHandler handles refresh token requests
 type RefreshTokenHandler struct {
-	jwtService     *jwt.JWTService
-	sessionService *session.SessionService
-	tokenHelper    *TokenHelper
-	config         *config.Config
+	jwtService             *jwt.JWTService
+	sessionService         *session.SessionService
+	tokenHelper            *TokenHelper
+	config                 *config.Config
+	partnerProfileRepository *repositories.PartnerProfileRepository
+	redisClient            *infrastructure.RedisClient
 }
 
 // NewRefreshTokenHandler creates a new RefreshTokenHandler instance
-func NewRefreshTokenHandler(jwtService *jwt.JWTService, sessionService *session.SessionService, tokenHelper *TokenHelper, cfg *config.Config) *RefreshTokenHandler {
+func NewRefreshTokenHandler(
+	jwtService *jwt.JWTService,
+	sessionService *session.SessionService,
+	tokenHelper *TokenHelper,
+	cfg *config.Config,
+	partnerProfileRepository *repositories.PartnerProfileRepository,
+	redisClient *infrastructure.RedisClient,
+) *RefreshTokenHandler {
 	return &RefreshTokenHandler{
-		jwtService:     jwtService,
-		sessionService: sessionService,
-		tokenHelper:    tokenHelper,
-		config:         cfg,
+		jwtService:             jwtService,
+		sessionService:         sessionService,
+		tokenHelper:            tokenHelper,
+		config:                 cfg,
+		partnerProfileRepository: partnerProfileRepository,
+		redisClient:            redisClient,
 	}
 }
 
@@ -111,6 +128,101 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 			return
 		}
 		log.Printf("✅ REFRESH: Refresh token is the active partner session")
+		
+		// SECURITY: Check partner_profiles.status before allowing token refresh
+		// Uses Redis cache (60s TTL) to reduce database queries
+		partnerEmail := claims.Email
+		log.Printf("🔍 REFRESH: Checking partner profile status for email: %s", partnerEmail)
+		
+		// Check Redis cache first (60s TTL to reduce database queries)
+		cacheKey := fmt.Sprintf("partner:status:%s", partnerEmail)
+		cachedStatus, cacheErr := h.redisClient.Get(ctx, cacheKey)
+		
+		var isAuthorized bool
+		cacheHit := false
+		
+		if cacheErr == nil {
+			// Cache hit - parse cached status
+			statusBool, parseErr := strconv.ParseBool(cachedStatus)
+			if parseErr == nil {
+				isAuthorized = statusBool
+				cacheHit = true
+				log.Printf("✅ REFRESH: Partner status retrieved from cache - Email: %s, Status: %v", partnerEmail, isAuthorized)
+				
+				// If status is false, block refresh immediately
+				if !isAuthorized {
+					log.Printf("❌ REFRESH: Partner account not authorized (cached) - Email: %s, Status: false - BLOCKING TOKEN REFRESH", partnerEmail)
+					// Invalidate the refresh token since partner is no longer authorized
+					h.sessionService.DeleteRefreshToken(ctx, refreshToken)
+					h.sessionService.InvalidatePartnerSession(ctx, claims.UserID)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"success": false,
+						"error":   "Unauthorized",
+						"message": "Your partner account is not authorized. Please contact administrator.",
+					})
+					return
+				}
+				
+				log.Printf("✅ REFRESH: Partner profile verified (cached) - Status: true")
+			} else {
+				// Cached value is invalid, fall through to database query
+				log.Printf("⚠️ REFRESH: Invalid cached status value, querying database")
+				cacheHit = false
+			}
+		} else if cacheErr != redis.Nil {
+			// Redis error (not a cache miss) - log but continue to database query
+			log.Printf("⚠️ REFRESH: Redis cache error (non-fatal): %v, querying database", cacheErr)
+			cacheHit = false
+		}
+		
+		// Cache miss or invalid cache value - query database
+		if !cacheHit {
+			partnerProfile, dbErr := h.partnerProfileRepository.GetByAccountEmail(ctx, partnerEmail)
+			if dbErr != nil {
+				log.Printf("❌ REFRESH: Partner profile not found for email: %s - Error: %v", partnerEmail, dbErr)
+				// Invalidate the refresh token since partner profile not found
+				h.sessionService.DeleteRefreshToken(ctx, refreshToken)
+				h.sessionService.InvalidatePartnerSession(ctx, claims.UserID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"error":   "Unauthorized",
+					"message": "Partner profile not found. Please contact administrator.",
+				})
+				return
+			}
+			
+			isAuthorized = partnerProfile.Status
+			
+			// Cache the status for 60 seconds
+			statusStr := strconv.FormatBool(isAuthorized)
+			if cacheSetErr := h.redisClient.Set(ctx, cacheKey, statusStr, 60*time.Second); cacheSetErr != nil {
+				log.Printf("⚠️ REFRESH: Failed to cache partner status (non-fatal): %v", cacheSetErr)
+			} else {
+				log.Printf("✅ REFRESH: Partner status cached for 60 seconds - Email: %s, Status: %v", partnerEmail, isAuthorized)
+			}
+			
+			// Check if partner status is true (authorized)
+			if !isAuthorized {
+				log.Printf("❌ REFRESH: Partner account not authorized - Email: %s, Status: false - BLOCKING TOKEN REFRESH", partnerEmail)
+				// Invalidate the refresh token since partner is no longer authorized
+				h.sessionService.DeleteRefreshToken(ctx, refreshToken)
+				h.sessionService.InvalidatePartnerSession(ctx, claims.UserID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"error":   "Unauthorized",
+					"message": "Your partner account is not authorized. Please contact administrator.",
+				})
+				return
+			}
+			
+			log.Printf("✅ REFRESH: Partner profile verified - Status: true, Shop: %s", partnerProfile.ShopName)
+		}
 	}
 
 	// TOKEN ROTATION: Invalidate old refresh token and generate new one

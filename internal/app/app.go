@@ -143,7 +143,8 @@ func (a *Application) RegisterRoutes() {
 	// Register partner agent routes (optional JWT auth - backward compatible with Python agent)
 	// No rate limiting for agent endpoints (internal communication)
 	// OptionalAuthMiddleware allows requests without JWT (Python agent) or with JWT (Go agent)
-	optionalAuth := auth_middleware.OptionalAuthMiddleware(a.services.JWTService)
+	// When JWT is present, checks partner_profiles.status (cached in Redis with 60s TTL) and blocks if status is false
+	optionalAuth := auth_middleware.OptionalAuthMiddleware(a.services.JWTService, a.repositories.PartnerProfileRepository, a.redisClient)
 	http.HandleFunc("/api/partner-agent/fetch-job", cors.CORS(optionalAuth(agentHandler.FetchJob)))
 	http.HandleFunc("/api/partner-agent/confirm-print", cors.CORS(optionalAuth(agentHandler.ConfirmPrint)))
 	http.HandleFunc("/api/partner-agent/confirm", cors.CORS(optionalAuth(agentHandler.ConfirmPrint))) // Keep for backward compatibility

@@ -1,6 +1,7 @@
 package partner
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -14,7 +15,14 @@ import (
 
 // LoginHandler handles partner login with email and password
 type LoginHandler struct {
-	accountRepository *repositories.AccountRepository
+	accountRepository      *repositories.AccountRepository
+	partnerProfileRepository *repositories.PartnerProfileRepository
+	otpService             interface {
+		GenerateOTP(ctx context.Context, email string) (string, error)
+	}
+	emailService           interface {
+		SendOTPEmail(email, otp string) error
+	}
 	tokenHelper       shared.TokenHelper
 	sendErrorResponse func(http.ResponseWriter, int, string, string)
 	sendJSONResponse  func(http.ResponseWriter, int, interface{})
@@ -23,15 +31,25 @@ type LoginHandler struct {
 // NewLoginHandler creates a new LoginHandler instance
 func NewLoginHandler(
 	accountRepository *repositories.AccountRepository,
+	partnerProfileRepository *repositories.PartnerProfileRepository,
+	otpService interface {
+		GenerateOTP(ctx context.Context, email string) (string, error)
+	},
+	emailService interface {
+		SendOTPEmail(email, otp string) error
+	},
 	tokenHelper shared.TokenHelper,
 	sendErrorResponse func(http.ResponseWriter, int, string, string),
 	sendJSONResponse func(http.ResponseWriter, int, interface{}),
 ) *LoginHandler {
 	return &LoginHandler{
-		accountRepository: accountRepository,
-		tokenHelper:        tokenHelper,
-		sendErrorResponse:  sendErrorResponse,
-		sendJSONResponse:   sendJSONResponse,
+		accountRepository:      accountRepository,
+		partnerProfileRepository: partnerProfileRepository,
+		otpService:             otpService,
+		emailService:           emailService,
+		tokenHelper:            tokenHelper,
+		sendErrorResponse:      sendErrorResponse,
+		sendJSONResponse:       sendJSONResponse,
 	}
 }
 
@@ -112,7 +130,45 @@ func (h *LoginHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("SUCCESS: Partner authenticated successfully - partner authorized")
+	// Check partner_profiles status - only authorized partners (status = true) can proceed
+	log.Printf("Checking partner profile status for email: %s", email)
+	partnerProfile, err := h.partnerProfileRepository.GetByAccountEmail(ctx, email)
+	if err != nil {
+		log.Printf("ERROR: Partner profile not found for email: %s - Error: %v", email, err)
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Partner profile not found. Please contact administrator.")
+		return
+	}
+
+	// Check if partner status is true (authorized)
+	if !partnerProfile.Status {
+		log.Printf("ERROR: Partner account not authorized - Email: %s, Status: false", email)
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Your partner account is not authorized. Please contact administrator.")
+		return
+	}
+
+	log.Printf("SUCCESS: Partner profile verified - Status: true, Shop: %s", partnerProfile.ShopName)
+
+	// Generate and send OTP for printer agent connection (only if status is true)
+	log.Printf("Generating OTP for partner printer agent connection")
+	otpCode, err := h.otpService.GenerateOTP(ctx, email)
+	if err != nil {
+		log.Printf("ERROR: Failed to generate OTP - Error: %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate OTP", "Failed to generate OTP. Please try again.")
+		return
+	}
+
+	// Send OTP via email asynchronously (in background goroutine)
+	go func(emailAddr, otpCode string) {
+		log.Printf("Sending OTP via email to partner (async)")
+		if err := h.emailService.SendOTPEmail(emailAddr, otpCode); err != nil {
+			log.Printf("ERROR: Failed to send OTP email asynchronously - Error: %v", err)
+			// Note: We don't fail the request here since OTP is already stored in Redis
+		} else {
+			log.Printf("SUCCESS: OTP email sent successfully to partner (async)")
+		}
+	}(email, otpCode)
+
+	log.Printf("SUCCESS: Partner authenticated successfully - OTP generated and sent to email: %s", email)
 
 	// Convert account to auth user model
 	authUser := &models.User{
