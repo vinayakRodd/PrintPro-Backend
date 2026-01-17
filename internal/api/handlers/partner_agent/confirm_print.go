@@ -125,10 +125,11 @@ func (h *AgentHandler) ConfirmPrint(w http.ResponseWriter, r *http.Request) {
 			} else {
 				// Store cost in job_cost table
 				// Note: job_cost uses account_email as PK, so we need the customer's email
+				// Also store partner_email to track which partner/shop the customer used
 				if printJob.CustomerEmail == nil {
 					log.Printf("WARNING: Cannot store job cost - print job has no customer_email")
 				} else {
-					err = h.jobCostRepo.CreateOrUpdate(ctx, *printJob.CustomerEmail, printJob.ID, jobCost)
+					err = h.jobCostRepo.CreateOrUpdate(ctx, *printJob.CustomerEmail, printJob.ID, printJob.PartnerEmail, jobCost)
 					if err != nil {
 						log.Printf("WARNING: Failed to store job cost - %v", err)
 					} else {
