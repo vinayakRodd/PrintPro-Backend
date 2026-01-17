@@ -139,7 +139,7 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	for customerEmail := range customerEmailSet {
 		account, err := h.accountRepository.GetByEmail(ctx, customerEmail)
 		if err != nil {
-			log.Printf("WARNING: Failed to fetch username for customer_email %s - %v", customerEmail, err)
+			log.Printf("WARNING: Failed to fetch username for customer - %v", err)
 			customerUsernameMap[customerEmail] = nil // Set to nil if not found
 		} else {
 			customerUsernameMap[customerEmail] = account.Username

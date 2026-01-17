@@ -121,7 +121,7 @@ func (h *PrintHandler) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 				var cachedCosts []jobcost.JobCost
 				if err := json.Unmarshal([]byte(cachedData), &cachedCosts); err == nil {
 					if partnerEmailParam != "" {
-						log.Printf("CACHE HIT: Retrieved %d job costs from cache for %d/%d (partner: %s)", len(cachedCosts), month, year, partnerEmailParam)
+						log.Printf("CACHE HIT: Retrieved %d job costs from cache for %d/%d", len(cachedCosts), month, year)
 					} else {
 						log.Printf("CACHE HIT: Retrieved %d job costs from cache for %d/%d", len(cachedCosts), month, year)
 					}
@@ -151,7 +151,7 @@ func (h *PrintHandler) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 				h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to retrieve job costs", err.Error())
 				return
 			}
-			log.Printf("SUCCESS: Retrieved %d job costs for %d/%d (partner: %s)", len(costs), month, year, partnerEmailParam)
+			log.Printf("SUCCESS: Retrieved %d job costs for %d/%d", len(costs), month, year)
 		} else {
 			costs, err = h.jobCostRepo.GetByMonth(ctx, year, month)
 			if err != nil {
@@ -167,11 +167,7 @@ func (h *PrintHandler) GetJobCosts(w http.ResponseWriter, r *http.Request) {
 			costsJSON, err := json.Marshal(costs)
 			if err == nil {
 				if err := h.redisClient.Set(ctx, cacheKey, costsJSON, 1*time.Minute); err == nil {
-					if partnerEmailParam != "" {
-						log.Printf("CACHE SET: Stored %d job costs in cache for %d/%d (partner: %s) (TTL: 1 minute)", len(costs), month, year, partnerEmailParam)
-					} else {
-						log.Printf("CACHE SET: Stored %d job costs in cache for %d/%d (TTL: 1 minute)", len(costs), month, year)
-					}
+					log.Printf("CACHE SET: Stored %d job costs in cache for %d/%d (TTL: 1 minute)", len(costs), month, year)
 				} else {
 					log.Printf("WARNING: Failed to store job costs in cache - %v", err)
 				}
@@ -214,7 +210,7 @@ fetchUsernames:
 	for customerEmail := range customerEmailSet {
 		account, err := h.accountRepository.GetByEmail(ctx, customerEmail)
 		if err != nil {
-			log.Printf("WARNING: Failed to fetch username for customer_email %s - %v", customerEmail, err)
+			log.Printf("WARNING: Failed to fetch username for customer - %v", err)
 			customerUsernameMap[customerEmail] = nil // Set to nil if not found
 		} else {
 			customerUsernameMap[customerEmail] = account.Username

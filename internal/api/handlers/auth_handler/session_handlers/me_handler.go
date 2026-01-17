@@ -33,7 +33,7 @@ func (h *MeHandler) HandleGetMe(w http.ResponseWriter, r *http.Request, sendJSON
 	ctx := r.Context()
 	account, err := h.accountRepository.GetByEmail(ctx, user.Email)
 	if err != nil {
-		log.Printf("WARNING: Failed to fetch username for email %s - %v", user.Email, err)
+		log.Printf("WARNING: Failed to fetch username - %v", err)
 		// Continue anyway - username is optional
 	} else {
 		// Update user's username from account

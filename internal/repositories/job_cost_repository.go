@@ -65,7 +65,7 @@ func (r *JobCostRepository) CreateOrUpdate(ctx context.Context, accountEmail str
 	if partnerEmail != nil {
 		partnerEmailStr = *partnerEmail
 	}
-	log.Printf("Job cost created/updated for customer_email: %s, partner_email: %s, print_job_id: %d, Total cost: %.2f", accountEmail, partnerEmailStr, printJobID, cost.TotalCost)
+	log.Printf("Job cost created/updated for print_job_id: %d, Total cost: %.2f", printJobID, cost.TotalCost)
 	return nil
 }
 

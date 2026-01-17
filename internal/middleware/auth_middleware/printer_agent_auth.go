@@ -59,7 +59,7 @@ func OptionalAuthMiddleware(jwtService *jwt.JWTService, partnerProfileRepository
 				return
 			}
 			
-			log.Printf("✅ AUTH: Access token validated successfully for user: %s (type: %s)", claims.UserID, claims.UserType)
+			log.Printf("✅ AUTH: Access token validated successfully - UserType: %s", claims.UserType)
 
 			// Verify user is a partner
 			if claims.UserType != "partner" {
@@ -78,7 +78,7 @@ func OptionalAuthMiddleware(jwtService *jwt.JWTService, partnerProfileRepository
 			// Uses Redis cache (60s TTL) to reduce database queries
 			ctx := r.Context()
 			partnerEmail := claims.Email // Use email from JWT claims
-			log.Printf("🔍 AUTH: Checking partner profile status for email: %s", partnerEmail)
+			log.Printf("🔍 AUTH: Checking partner profile status")
 			
 			// Check Redis cache first (60s TTL to reduce database queries)
 			cacheKey := fmt.Sprintf("partner:status:%s", partnerEmail)
@@ -94,11 +94,11 @@ func OptionalAuthMiddleware(jwtService *jwt.JWTService, partnerProfileRepository
 				if parseErr == nil {
 					isAuthorized = statusBool
 					cacheHit = true
-					log.Printf("✅ AUTH: Partner status retrieved from cache - Email: %s, Status: %v", partnerEmail, isAuthorized)
+					log.Printf("✅ AUTH: Partner status retrieved from cache - Status: %v", isAuthorized)
 					
 					// If status is false, block immediately
 					if !isAuthorized {
-						log.Printf("❌ AUTH: Partner account not authorized (cached) - Email: %s, Status: false - BLOCKING ACCESS", partnerEmail)
+						log.Printf("❌ AUTH: Partner account not authorized (cached) - Status: false - BLOCKING ACCESS")
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusUnauthorized)
 						json.NewEncoder(w).Encode(map[string]interface{}{
@@ -126,7 +126,7 @@ func OptionalAuthMiddleware(jwtService *jwt.JWTService, partnerProfileRepository
 			if !cacheHit {
 				partnerProfile, dbErr := partnerProfileRepository.GetByAccountEmail(ctx, partnerEmail)
 				if dbErr != nil {
-					log.Printf("❌ AUTH: Partner profile not found for email: %s - Error: %v", partnerEmail, dbErr)
+					log.Printf("❌ AUTH: Partner profile not found - Error: %v", dbErr)
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusUnauthorized)
 					json.NewEncoder(w).Encode(map[string]interface{}{
@@ -145,12 +145,12 @@ func OptionalAuthMiddleware(jwtService *jwt.JWTService, partnerProfileRepository
 				if cacheErr := redisClient.Set(ctx, cacheKey, statusStr, 60*time.Second); cacheErr != nil {
 					log.Printf("⚠️ AUTH: Failed to cache partner status (non-fatal): %v", cacheErr)
 				} else {
-					log.Printf("✅ AUTH: Partner status cached for 60 seconds - Email: %s, Status: %v", partnerEmail, isAuthorized)
+					log.Printf("✅ AUTH: Partner status cached for 60 seconds - Status: %v", isAuthorized)
 				}
 				
 				// Check if partner status is true (authorized)
 				if !isAuthorized {
-					log.Printf("❌ AUTH: Partner account not authorized - Email: %s, Status: false - BLOCKING ACCESS", partnerEmail)
+					log.Printf("❌ AUTH: Partner account not authorized - Status: false - BLOCKING ACCESS")
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusUnauthorized)
 					json.NewEncoder(w).Encode(map[string]interface{}{

@@ -158,7 +158,7 @@ func (s *GoogleAuthService) RegisterOrLoginUser(ctx context.Context, googleUser 
 	}
 
 	// Account exists - use the user_type from the accounts table (automatic detection)
-	log.Printf("Google Sign-In: Account found - Email: %s, UserType: %s (auto-detected)", accountRecord.Email, accountRecord.UserType)
+	log.Printf("Google Sign-In: Account found - UserType: %s (auto-detected)", accountRecord.UserType)
 	
 	// Update username if it's missing and we have a name from Google
 	if accountRecord.Username == nil && googleUser.Name != "" {

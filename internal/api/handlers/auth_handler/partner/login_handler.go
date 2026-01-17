@@ -19,6 +19,7 @@ type LoginHandler struct {
 	partnerProfileRepository *repositories.PartnerProfileRepository
 	otpService             interface {
 		GenerateOTP(ctx context.Context, email string) (string, error)
+		MarkOTPEmailSent(ctx context.Context, email string) (bool, error)
 	}
 	emailService           interface {
 		SendOTPEmail(email, otp string) error
@@ -34,6 +35,7 @@ func NewLoginHandler(
 	partnerProfileRepository *repositories.PartnerProfileRepository,
 	otpService interface {
 		GenerateOTP(ctx context.Context, email string) (string, error)
+		MarkOTPEmailSent(ctx context.Context, email string) (bool, error)
 	},
 	emailService interface {
 		SendOTPEmail(email, otp string) error
@@ -131,17 +133,17 @@ func (h *LoginHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check partner_profiles status - only authorized partners (status = true) can proceed
-	log.Printf("Checking partner profile status for email: %s", email)
+	log.Printf("Checking partner profile status")
 	partnerProfile, err := h.partnerProfileRepository.GetByAccountEmail(ctx, email)
 	if err != nil {
-		log.Printf("ERROR: Partner profile not found for email: %s - Error: %v", email, err)
+		log.Printf("ERROR: Partner profile not found - Error: %v", err)
 		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Partner profile not found. Please contact administrator.")
 		return
 	}
 
 	// Check if partner status is true (authorized)
 	if !partnerProfile.Status {
-		log.Printf("ERROR: Partner account not authorized - Email: %s, Status: false", email)
+		log.Printf("ERROR: Partner account not authorized - Status: false")
 		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Your partner account is not authorized. Please contact administrator.")
 		return
 	}
@@ -149,6 +151,8 @@ func (h *LoginHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	log.Printf("SUCCESS: Partner profile verified - Status: true, Shop: %s", partnerProfile.ShopName)
 
 	// Generate and send OTP for printer agent connection (only if status is true)
+	// GenerateOTP now checks for existing OTP and reuses it to prevent duplicate OTP generation
+	// We also check if email was already sent to prevent duplicate emails
 	log.Printf("Generating OTP for partner printer agent connection")
 	otpCode, err := h.otpService.GenerateOTP(ctx, email)
 	if err != nil {
@@ -157,18 +161,32 @@ func (h *LoginHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send OTP via email asynchronously (in background goroutine)
-	go func(emailAddr, otpCode string) {
-		log.Printf("Sending OTP via email to partner (async)")
-		if err := h.emailService.SendOTPEmail(emailAddr, otpCode); err != nil {
-			log.Printf("ERROR: Failed to send OTP email asynchronously - Error: %v", err)
-			// Note: We don't fail the request here since OTP is already stored in Redis
-		} else {
-			log.Printf("SUCCESS: OTP email sent successfully to partner (async)")
-		}
-	}(email, otpCode)
+	// Check if email was already sent for this OTP to prevent duplicate emails
+	// This handles the case where login endpoint is called multiple times
+	emailAlreadySent, err := h.otpService.MarkOTPEmailSent(ctx, email)
+	if err != nil {
+		log.Printf("WARNING: Failed to check email send status (non-fatal): %v", err)
+		// Continue - worst case is duplicate email
+		emailAlreadySent = false
+	}
 
-	log.Printf("SUCCESS: Partner authenticated successfully - OTP generated and sent to email: %s", email)
+	// Send OTP via email asynchronously (in background goroutine)
+	// Only send if email hasn't been sent recently (within 2 minutes)
+	if !emailAlreadySent {
+		go func(emailAddr, otpCode string) {
+			log.Printf("Sending OTP via email to partner (async)")
+			if err := h.emailService.SendOTPEmail(emailAddr, otpCode); err != nil {
+				log.Printf("ERROR: Failed to send OTP email asynchronously - Error: %v", err)
+				// Note: We don't fail the request here since OTP is already stored in Redis
+			} else {
+				log.Printf("SUCCESS: OTP email sent successfully to partner (async)")
+			}
+		}(email, otpCode)
+	} else {
+		log.Printf("Skipping email send - email was already sent recently for this OTP")
+	}
+
+	log.Printf("SUCCESS: Partner authenticated successfully - OTP ready for email")
 
 	// Convert account to auth user model
 	authUser := &models.User{

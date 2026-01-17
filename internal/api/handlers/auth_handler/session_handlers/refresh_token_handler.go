@@ -132,7 +132,7 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		// SECURITY: Check partner_profiles.status before allowing token refresh
 		// Uses Redis cache (60s TTL) to reduce database queries
 		partnerEmail := claims.Email
-		log.Printf("🔍 REFRESH: Checking partner profile status for email: %s", partnerEmail)
+		log.Printf("🔍 REFRESH: Checking partner profile status")
 		
 		// Check Redis cache first (60s TTL to reduce database queries)
 		cacheKey := fmt.Sprintf("partner:status:%s", partnerEmail)
@@ -147,11 +147,11 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 			if parseErr == nil {
 				isAuthorized = statusBool
 				cacheHit = true
-				log.Printf("✅ REFRESH: Partner status retrieved from cache - Email: %s, Status: %v", partnerEmail, isAuthorized)
+				log.Printf("✅ REFRESH: Partner status retrieved from cache - Status: %v", isAuthorized)
 				
 				// If status is false, block refresh immediately
 				if !isAuthorized {
-					log.Printf("❌ REFRESH: Partner account not authorized (cached) - Email: %s, Status: false - BLOCKING TOKEN REFRESH", partnerEmail)
+					log.Printf("❌ REFRESH: Partner account not authorized (cached) - Status: false - BLOCKING TOKEN REFRESH")
 					// Invalidate the refresh token since partner is no longer authorized
 					h.sessionService.DeleteRefreshToken(ctx, refreshToken)
 					h.sessionService.InvalidatePartnerSession(ctx, claims.UserID)
@@ -181,7 +181,7 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		if !cacheHit {
 			partnerProfile, dbErr := h.partnerProfileRepository.GetByAccountEmail(ctx, partnerEmail)
 			if dbErr != nil {
-				log.Printf("❌ REFRESH: Partner profile not found for email: %s - Error: %v", partnerEmail, dbErr)
+				log.Printf("❌ REFRESH: Partner profile not found - Error: %v", dbErr)
 				// Invalidate the refresh token since partner profile not found
 				h.sessionService.DeleteRefreshToken(ctx, refreshToken)
 				h.sessionService.InvalidatePartnerSession(ctx, claims.UserID)
@@ -202,12 +202,12 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 			if cacheSetErr := h.redisClient.Set(ctx, cacheKey, statusStr, 60*time.Second); cacheSetErr != nil {
 				log.Printf("⚠️ REFRESH: Failed to cache partner status (non-fatal): %v", cacheSetErr)
 			} else {
-				log.Printf("✅ REFRESH: Partner status cached for 60 seconds - Email: %s, Status: %v", partnerEmail, isAuthorized)
+				log.Printf("✅ REFRESH: Partner status cached for 60 seconds - Status: %v", isAuthorized)
 			}
 			
 			// Check if partner status is true (authorized)
 			if !isAuthorized {
-				log.Printf("❌ REFRESH: Partner account not authorized - Email: %s, Status: false - BLOCKING TOKEN REFRESH", partnerEmail)
+				log.Printf("❌ REFRESH: Partner account not authorized - Status: false - BLOCKING TOKEN REFRESH")
 				// Invalidate the refresh token since partner is no longer authorized
 				h.sessionService.DeleteRefreshToken(ctx, refreshToken)
 				h.sessionService.InvalidatePartnerSession(ctx, claims.UserID)
