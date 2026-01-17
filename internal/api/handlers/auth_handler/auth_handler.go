@@ -70,7 +70,7 @@ func NewAuthHandler(
 ) *AuthHandler {
 		// Initialize session handlers
 		tokenHelper := session_handlers.NewTokenHelper(jwtService, sessionService, cfg)
-		refreshTokenHandler := session_handlers.NewRefreshTokenHandler(jwtService, sessionService, tokenHelper, cfg)
+		refreshTokenHandler := session_handlers.NewRefreshTokenHandler(jwtService, sessionService, tokenHelper, cfg, partnerProfileRepository, redisClient)
 		logoutHandler := session_handlers.NewLogoutHandler(sessionService, cfg)
 		meHandler := session_handlers.NewMeHandler(accountRepository)
 	
@@ -98,6 +98,8 @@ func NewAuthHandler(
 		accountRepository,
 		partnerProfileRepository,
 		googleAuthService,
+		otpService,
+		emailService,
 		tokenHelper,
 		handler.sendErrorResponse,
 		handler.sendJSONResponse,
