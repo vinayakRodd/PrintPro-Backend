@@ -40,26 +40,39 @@ func OptionalAuthMiddleware(jwtService *jwt.JWTService, partnerProfileRepository
 				return
 			}
 
-			accessToken := parts[1]
+			token := parts[1]
 
-			// Validate JWT access token
+			// Validate JWT token (accepts both access token and refresh token for partner agents)
 			// IMPORTANT: If JWT is present, it MUST be valid (no backward compatibility for invalid JWTs)
 			// This ensures status checks are enforced when agents send JWTs
-			log.Printf("🔍 AUTH: Validating access token for partner agent...")
-			claims, err := jwtService.ValidateAccessToken(accessToken)
-			if err != nil {
-				log.Printf("❌ AUTH: Access token validation failed - %v - BLOCKING REQUEST (JWT present but invalid)", err)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"success": false,
-					"error":   "Unauthorized",
-					"message": "Invalid or expired access token. Please login again.",
-				})
-				return
-			}
+			// Partner agents use refresh tokens for long-lived sessions (7 days instead of 15 minutes)
+			log.Printf("🔍 AUTH: Validating token for partner agent (accepts access or refresh token)...")
 			
-			log.Printf("✅ AUTH: Access token validated successfully - UserType: %s", claims.UserType)
+			var claims *jwt.Claims
+			var err error
+			
+			// Try validating as refresh token first (printer agents use refresh tokens for long-lived sessions)
+			// Then fallback to access token if refresh token validation fails
+			claims, err = jwtService.ValidateRefreshToken(token)
+			if err != nil {
+				// If refresh token validation fails, try as access token (backward compatibility)
+				log.Printf("⚠️ AUTH: Refresh token validation failed (%v), trying as access token...", err)
+				claims, err = jwtService.ValidateAccessToken(token)
+				if err != nil {
+					log.Printf("❌ AUTH: Token validation failed (both refresh and access) - %v - BLOCKING REQUEST (JWT present but invalid)", err)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"success": false,
+						"error":   "Unauthorized",
+						"message": "Invalid or expired token. Please login again.",
+					})
+					return
+				}
+				log.Printf("✅ AUTH: Access token validated successfully - UserType: %s", claims.UserType)
+			} else {
+				log.Printf("✅ AUTH: Refresh token validated successfully - UserType: %s (long-lived session)", claims.UserType)
+			}
 
 			// Verify user is a partner
 			if claims.UserType != "partner" {

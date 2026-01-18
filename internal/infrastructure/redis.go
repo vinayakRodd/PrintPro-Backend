@@ -47,6 +47,12 @@ func (r *RedisClient) Set(ctx context.Context, key string, value interface{}, ex
 	return r.client.Set(ctx, key, value, expiration).Err()
 }
 
+// SetNX atomically sets a key-value pair only if the key does not exist (returns true if set, false if key exists)
+func (r *RedisClient) SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) (bool, error) {
+	result, err := r.client.SetNX(ctx, key, value, expiration).Result()
+	return result, err
+}
+
 // Get retrieves a value by key
 func (r *RedisClient) Get(ctx context.Context, key string) (string, error) {
 	return r.client.Get(ctx, key).Result()

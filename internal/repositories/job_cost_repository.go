@@ -61,10 +61,6 @@ func (r *JobCostRepository) CreateOrUpdate(ctx context.Context, accountEmail str
 		return fmt.Errorf("failed to create or update job cost: %w", err)
 	}
 
-	partnerEmailStr := "nil"
-	if partnerEmail != nil {
-		partnerEmailStr = *partnerEmail
-	}
 	log.Printf("Job cost created/updated for print_job_id: %d, Total cost: %.2f", printJobID, cost.TotalCost)
 	return nil
 }

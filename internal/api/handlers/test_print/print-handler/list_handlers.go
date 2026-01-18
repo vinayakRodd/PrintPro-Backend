@@ -243,6 +243,87 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetCompletedJobs retrieves all completed print jobs for the authenticated partner
+func (h *PrintHandler) GetCompletedJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only GET method is allowed")
+		return
+	}
+
+	// Get user from context
+	user, ok := auth_middleware.GetUserFromContext(r)
+	if !ok {
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "User not found in session")
+		return
+	}
+
+	// Verify user is a partner
+	if user.UserType != "partner" {
+		h.sendErrorResponse(w, http.StatusForbidden, "Forbidden", "Only partners can view completed jobs")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Get partner_email from account_email (user.ID is the email)
+	accountEmail := user.ID
+
+	// Get partner profile to get partner_email
+	partnerProfile, err := h.partnerProfileRepo.GetByAccountEmail(ctx, accountEmail)
+	if err != nil {
+		log.Printf("ERROR: Partner profile not found - %v", err)
+		h.sendErrorResponse(w, http.StatusNotFound, "Partner profile not found", "Partner profile not found for this account")
+		return
+	}
+
+	partnerEmail := partnerProfile.PartnerEmail
+	log.Printf("INFO: Getting completed jobs for partner (shop: %s)", partnerProfile.ShopName)
+
+	// Get completed print jobs from database
+	completedJobs, err := h.printJobRepo.GetCompletedByPartnerEmail(ctx, partnerEmail)
+	if err != nil {
+		log.Printf("ERROR: Failed to get completed print jobs from database: %v", err)
+		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to retrieve completed jobs")
+		return
+	}
+
+	log.Printf("INFO: Found %d completed print jobs for partner", len(completedJobs))
+
+	// Convert to response format
+	jobList := []map[string]interface{}{}
+	for _, job := range completedJobs {
+		// SECURITY: Double-check partner_email matches
+		if job.PartnerEmail == nil || *job.PartnerEmail != partnerEmail {
+			log.Printf("ERROR: SECURITY ISSUE - Print job ID %d has mismatched partner_email - SKIPPING", job.ID)
+			continue
+		}
+
+		jobList = append(jobList, map[string]interface{}{
+			"id":                job.ID,
+			"filename":          job.Filename,
+			"file_url":          job.FileURL,
+			"status":            job.Status,
+			"total_cost":        job.TotalCost,
+			"print_type":        job.PrintType,
+			"color":             job.Color,
+			"num_copies":        job.NumCopies,
+			"back_to_back":      job.BackToBack,
+			"delete_after_print": job.DeleteAfterPrint,
+			"customer_email":    job.CustomerEmail,
+			"partner_email":     job.PartnerEmail,
+			"created_at":        job.CreatedAt,
+			"updated_at":        job.UpdatedAt,
+		})
+	}
+
+	h.sendJSONResponse(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"jobs":   jobList,
+		"count":    len(jobList),
+		"message": "Completed print jobs retrieved successfully",
+	})
+}
+
 // ListPrinters returns the printer list EXACTLY as sent by the partner agent
 // NO local printer detection - only returns what partner agent synced via /api/partner-agent/sync-printers
 func (h *PrintHandler) ListPrinters(w http.ResponseWriter, r *http.Request) {
