@@ -315,6 +315,43 @@ func (r *PrintJobRepository) GetByPartnerEmail(ctx context.Context, partnerEmail
 	return jobs, nil
 }
 
+// GetCompletedByPartnerEmail retrieves all completed print jobs for a specific partner
+// SECURITY: Only returns files where partner_email matches exactly and status = 'completed'
+func (r *PrintJobRepository) GetCompletedByPartnerEmail(ctx context.Context, partnerEmail string) ([]printjob.PrintJob, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT id, customer_email, partner_email, printer_id, filename, file_url, p_type, p_type as print_type, color, num_copies, page_options, back_to_back, delete_after_print, status, total_cost, created_at, updated_at
+		 FROM print_jobs 
+		 WHERE partner_email = $1 AND partner_email IS NOT NULL AND status = 'completed'
+		 ORDER BY updated_at DESC`,
+		partnerEmail,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get completed print jobs by partner_email: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []printjob.PrintJob
+	for rows.Next() {
+		job, err := r.scanPrintJobRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan print job: %w", err)
+		}
+		
+		// SECURITY: Double-check partner_email matches (defensive programming)
+		if job.PartnerEmail == nil || *job.PartnerEmail != partnerEmail {
+			continue
+		}
+		
+		jobs = append(jobs, *job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating print jobs: %w", err)
+	}
+
+	return jobs, nil
+}
+
 // GetByPartnerID is deprecated - use GetByPartnerEmail instead
 func (r *PrintJobRepository) GetByPartnerID(ctx context.Context, partnerID int64) ([]printjob.PrintJob, error) {
 	return nil, fmt.Errorf("GetByPartnerID is deprecated, use GetByPartnerEmail instead")
