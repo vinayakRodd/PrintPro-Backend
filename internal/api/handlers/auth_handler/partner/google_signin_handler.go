@@ -8,29 +8,33 @@ import (
 	"print-pro-backend/internal/api/handlers/auth_handler/shared"
 	"print-pro-backend/internal/models"
 	"print-pro-backend/internal/models/account"
+	"print-pro-backend/internal/repositories"
 	"print-pro-backend/internal/services/google_auth"
 )
 
 // GoogleSignInHandler handles Google Sign-In for partners
 type GoogleSignInHandler struct {
-	googleAuthService *google_auth.GoogleAuthService
-	tokenHelper       shared.TokenHelper
-	sendErrorResponse func(http.ResponseWriter, int, string, string)
-	sendJSONResponse  func(http.ResponseWriter, int, interface{})
+	googleAuthService        *google_auth.GoogleAuthService
+	partnerProfileRepository *repositories.PartnerProfileRepository
+	tokenHelper              shared.TokenHelper
+	sendErrorResponse        func(http.ResponseWriter, int, string, string)
+	sendJSONResponse         func(http.ResponseWriter, int, interface{})
 }
 
 // NewGoogleSignInHandler creates a new GoogleSignInHandler instance
 func NewGoogleSignInHandler(
 	googleAuthService *google_auth.GoogleAuthService,
+	partnerProfileRepository *repositories.PartnerProfileRepository,
 	tokenHelper shared.TokenHelper,
 	sendErrorResponse func(http.ResponseWriter, int, string, string),
 	sendJSONResponse func(http.ResponseWriter, int, interface{}),
 ) *GoogleSignInHandler {
 	return &GoogleSignInHandler{
-		googleAuthService: googleAuthService,
-		tokenHelper:        tokenHelper,
-		sendErrorResponse:  sendErrorResponse,
-		sendJSONResponse:   sendJSONResponse,
+		googleAuthService:        googleAuthService,
+		partnerProfileRepository: partnerProfileRepository,
+		tokenHelper:               tokenHelper,
+		sendErrorResponse:         sendErrorResponse,
+		sendJSONResponse:          sendJSONResponse,
 	}
 }
 
@@ -89,7 +93,28 @@ func (h *GoogleSignInHandler) HandleGoogleSignIn(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// SECURITY: Check partner_profiles.status before allowing login
+	// Only authorized partners (status = true) can proceed
+	log.Printf("🔍 GOOGLE PARTNER: Checking partner profile status")
+	partnerProfile, err := h.partnerProfileRepository.GetByAccountEmail(ctx, registeredUser.Email)
+	if err != nil {
+		log.Printf("❌ GOOGLE PARTNER: Partner profile not found - Error: %v", err)
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Partner profile not found. Please contact administrator.")
+		return
+	}
+
+	// Check if partner status is true (authorized)
+	if !partnerProfile.Status {
+		log.Printf("❌ GOOGLE PARTNER: Partner account not authorized - Status: false")
+		h.sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Your partner account is not authorized. Please contact administrator.")
+		return
+	}
+
+	log.Printf("✅ GOOGLE PARTNER: Partner profile verified - Status: true, Shop: %s", partnerProfile.ShopName)
+
 	// Generate tokens and set cookies
+	// NOTE: Single session policy is automatically enforced in GenerateTokensAndSetCookies
+	// It will invalidate any existing partner session before creating a new one
 	accessToken, _, err := h.tokenHelper.GenerateTokensAndSetCookies(w, registeredUser.ID, registeredUser.Email, registeredUser.UserType, ctx)
 	if err != nil {
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Failed to generate tokens", err.Error())
