@@ -44,6 +44,7 @@ func NewPartnerAuthHandler(
 	
 	googleHandler := NewGoogleSignInHandler(
 		googleAuthService,
+		partnerProfileRepository,
 		tokenHelper,
 		sendErrorResponse,
 		sendJSONResponse,
