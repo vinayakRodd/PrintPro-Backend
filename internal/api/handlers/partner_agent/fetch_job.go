@@ -1,7 +1,6 @@
 package partner_agent
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,41 +8,76 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"print-pro-backend/internal/middleware/auth_middleware"
 	"print-pro-backend/internal/models/printjob"
 	"strings"
 )
 
 // FetchJob handles requests from partner agent to fetch the next print job
-// Uses Redis RPOPLPUSH to atomically move a job from ready queue to processing queue
-// This ensures only one agent gets a job even if multiple agents ping simultaneously
+// Queries database for pending jobs with status 'pending' for the authenticated partner
 func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
-	if h.redisClient == nil {
-		log.Printf("ERROR: Redis client is not available")
+	ctx := r.Context()
+
+	// Get user from context (set by OptionalAuthMiddleware if JWT is present)
+	user, ok := auth_middleware.GetUserFromContext(r)
+	if !ok {
+		log.Printf("ERROR: User not found in context - partner agent must be authenticated")
+		http.Error(w, "Unauthorized - partner agent must be authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	// Verify user is a partner
+	if user.UserType != "partner" {
+		log.Printf("ERROR: Non-partner user attempting to fetch jobs")
+		http.Error(w, "Forbidden - only partners can fetch jobs", http.StatusForbidden)
+		return
+	}
+
+	// Get partner_email from account_email (user.ID is the email)
+	accountEmail := user.ID
+
+	// Get partner profile to get partner_email
+	// Note: We need to access partnerProfileRepo, but it's not in AgentHandler
+	// For now, we'll use accountEmail as partnerEmail (they should be the same for partners)
+	// If needed, we can add partnerProfileRepo to AgentHandler later
+	partnerEmail := accountEmail
+
+	// Query database for pending jobs for this partner
+	if h.printJobRepo == nil {
+		log.Printf("ERROR: PrintJobRepository is not available")
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	ctx := context.Background()
-	readyQueueKey := "printer:queue:ready"
-	processingQueueKey := "printer:queue:processing"
-
-	// Atomically move one job from ready queue to processing queue
-	// RPOPLPUSH ensures atomic operation - only one agent gets the job
-	fileName, err := h.redisClient.RPOPLPUSH(ctx, readyQueueKey, processingQueueKey)
+	// Get pending jobs from database
+	pendingJobs, err := h.printJobRepo.GetPendingByPartnerEmail(ctx, partnerEmail)
 	if err != nil {
-		log.Printf("ERROR: Failed to pop job from Redis queue: %v", err)
+		log.Printf("ERROR: Failed to get pending jobs from database: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	// If fileName is empty, no jobs available
-	if fileName == "" {
+	// If no pending jobs, return 204 No Content
+	if len(pendingJobs) == 0 {
 		w.WriteHeader(http.StatusNoContent)
-		log.Printf("INFO: No jobs available in Redis ready queue - agent pinged but queue is empty")
+		log.Printf("INFO: No pending jobs available for partner - agent pinged but no pending jobs")
 		return
 	}
 
-	log.Printf("INFO: Agent pinged - Job atomically moved from ready to processing queue - File: %s", fileName)
+	// Get the first pending job (oldest first, as per GetPendingByPartnerEmail ordering)
+	printJob := pendingJobs[0]
+	fileName := printJob.Filename
+
+	log.Printf("INFO: Agent pinged - Found pending job - File: %s, Job ID: %d", fileName, printJob.ID)
+
+	// CRITICAL: Update database status to "processing" when file is sent to agent
+	// This ensures partner dashboard shows correct status immediately
+	if err := h.printJobRepo.UpdateStatus(ctx, fileName, "processing"); err != nil {
+		log.Printf("WARNING: Failed to update print job status to 'processing': %v", err)
+		http.Error(w, "Failed to update job status", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("INFO: Print job status updated to 'processing' - File: %s", fileName)
 
 	// CRITICAL: Update database status to "processing" when file is sent to agent
 	// This ensures partner dashboard shows correct status immediately
@@ -56,15 +90,13 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// File is still in ready folder (we don't move it physically anymore)
 	// Read file from ready folder
 	filePath := filepath.Join(h.readyDir, fileName)
 	file, err := os.Open(filePath)
 	if err != nil {
 		log.Printf("ERROR: Failed to open file %s: %v", filePath, err)
-		// Job is already in processing queue, but file is missing
-		// Remove it from processing queue to prevent it from being stuck
-		h.redisClient.LREM(ctx, processingQueueKey, 1, fileName)
+		// Revert status back to pending if file is missing
+		h.printJobRepo.UpdateStatus(ctx, fileName, "pending")
 		http.Error(w, "File not found", http.StatusNotFound)
 		return
 	}
@@ -74,14 +106,13 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	fileInfo, err := file.Stat()
 	if err != nil {
 		log.Printf("ERROR: Failed to get file info for %s: %v", filePath, err)
-		// Remove from processing queue
-		h.redisClient.LREM(ctx, processingQueueKey, 1, fileName)
+		// Revert status back to pending if file read fails
+		h.printJobRepo.UpdateStatus(ctx, fileName, "pending")
 		http.Error(w, "Failed to read file", http.StatusInternalServerError)
 		return
 	}
 
-	// OPTIMIZATION: Get print parameters from database (can be slow, but happens after file is ready to stream)
-	// This runs in parallel with file opening, so minimal impact
+	// Get print parameters from the print job we already retrieved
 	var colorValue bool = false // Default to black & white
 	var numCopiesValue int = 1   // Default to 1 copy
 	var startPageValue *int = nil // Default to nil (print all pages from start)
@@ -93,54 +124,45 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	var printTypeValue *string = nil // Default to nil (agent will use default/A4)
 	var cropOptionsValue *printjob.CropOptions = nil // Default to nil (no cropping)
 	var selectedPrinterName string = "" // Selected printer name for this job
-	
-	if h.printJobRepo != nil {
-		printJob, err := h.printJobRepo.GetByFilename(ctx, fileName)
-		if err != nil {
-			log.Printf("WARNING: Failed to get print job for filename '%s': %v (using defaults: color=false, copies=1, all pages)", fileName, err)
-		} else {
-			// Use values from database, with defaults if nil
-			if printJob.Color != nil {
-				colorValue = *printJob.Color
-			}
-			if printJob.NumCopies != nil {
-				numCopiesValue = *printJob.NumCopies
-			}
-			// Extract page options from PageOptions structure
-			if printJob.PageOptions.StartPage != nil {
-				startPageValue = printJob.PageOptions.StartPage
-			}
-			if printJob.PageOptions.EndPage != nil {
-				endPageValue = printJob.PageOptions.EndPage
-			}
-			if printJob.PageOptions.FilterType != nil {
-				pageFilterTypeValue = printJob.PageOptions.FilterType
-			}
-			if printJob.PageOptions.ColorPages != nil && len(printJob.PageOptions.ColorPages) > 0 {
-				individualColorPagesValue = printJob.PageOptions.ColorPages
-			}
-			if printJob.PageOptions.SkipPages != nil && len(printJob.PageOptions.SkipPages) > 0 {
-				skipPagesValue = printJob.PageOptions.SkipPages
-			}
-			if printJob.BackToBack != nil {
-				backToBackValue = *printJob.BackToBack
-			}
-			// Get print_type (prefer PrintType over PType)
-			if printJob.PrintType != nil {
-				printTypeValue = printJob.PrintType
-			} else if printJob.PType != nil {
-				printTypeValue = printJob.PType
-			}
-			// Get crop_options from page_options
-			if printJob.PageOptions.CropOptions != nil {
-				cropOptionsValue = printJob.PageOptions.CropOptions
-			}
-			log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v, SkipPages: %v, BackToBack: %v, PrintType: %v, CropOptions: %+v", 
-				fileName, colorValue, numCopiesValue, startPageValue, endPageValue, pageFilterTypeValue, individualColorPagesValue, skipPagesValue, backToBackValue, printTypeValue, cropOptionsValue)
-		}
-	} else {
-		log.Printf("WARNING: PrintJobRepository not available, using defaults (color=false, copies=1, all pages)")
+
+	// Use values from database, with defaults if nil
+	if printJob.Color != nil {
+		colorValue = *printJob.Color
 	}
+	if printJob.NumCopies != nil {
+		numCopiesValue = *printJob.NumCopies
+	}
+	// Extract page options from PageOptions structure
+	if printJob.PageOptions.StartPage != nil {
+		startPageValue = printJob.PageOptions.StartPage
+	}
+	if printJob.PageOptions.EndPage != nil {
+		endPageValue = printJob.PageOptions.EndPage
+	}
+	if printJob.PageOptions.FilterType != nil {
+		pageFilterTypeValue = printJob.PageOptions.FilterType
+	}
+	if printJob.PageOptions.ColorPages != nil && len(printJob.PageOptions.ColorPages) > 0 {
+		individualColorPagesValue = printJob.PageOptions.ColorPages
+	}
+	if printJob.PageOptions.SkipPages != nil && len(printJob.PageOptions.SkipPages) > 0 {
+		skipPagesValue = printJob.PageOptions.SkipPages
+	}
+	if printJob.BackToBack != nil {
+		backToBackValue = *printJob.BackToBack
+	}
+	// Get print_type (prefer PrintType over PType)
+	if printJob.PrintType != nil {
+		printTypeValue = printJob.PrintType
+	} else if printJob.PType != nil {
+		printTypeValue = printJob.PType
+	}
+	// Get crop_options from page_options
+	if printJob.PageOptions.CropOptions != nil {
+		cropOptionsValue = printJob.PageOptions.CropOptions
+	}
+	log.Printf("INFO: Retrieved print parameters for '%s' - Color: %v, Copies: %d, StartPage: %v, EndPage: %v, PageFilterType: %v, IndividualColorPages: %v, SkipPages: %v, BackToBack: %v, PrintType: %v, CropOptions: %+v", 
+		fileName, colorValue, numCopiesValue, startPageValue, endPageValue, pageFilterTypeValue, individualColorPagesValue, skipPagesValue, backToBackValue, printTypeValue, cropOptionsValue)
 
 	// MULTI-PRINTER SUPPORT: Select appropriate printer for this job
 	// Get synced printers from agent
@@ -227,13 +249,14 @@ func (h *AgentHandler) FetchJob(w http.ResponseWriter, r *http.Request) {
 	_, err = io.Copy(w, file)
 	if err != nil {
 		log.Printf("ERROR: Failed to stream file %s: %v", fileName, err)
-		// Note: Job is already in processing queue, will be cleaned up on confirm
+		// Revert status back to pending if streaming fails
+		h.printJobRepo.UpdateStatus(ctx, fileName, "pending")
 		file.Close()
 		return
 	}
 	file.Close()
 
-	log.Printf("SUCCESS: File sent to agent - File: %s (job in processing queue, waiting for confirmation)", fileName)
+	log.Printf("SUCCESS: File sent to agent - File: %s (status: processing, waiting for confirmation)", fileName)
 }
 
 // selectPrinterForJob intelligently selects a printer based on job requirements

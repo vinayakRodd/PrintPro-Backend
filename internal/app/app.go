@@ -140,6 +140,7 @@ func (a *Application) RegisterRoutes() {
 	http.HandleFunc("/api/test-print/dashboard/overview", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.GetDashboardOverview))))
 	http.HandleFunc("/api/test-print/job-costs", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.GetJobCosts))))
 	http.HandleFunc("/api/test-print/completed-jobs", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.GetCompletedJobs))))
+	http.HandleFunc("/api/test-print/reprint", cors.CORS(a.services.ProfileRateLimiter.LimitMiddleware(a.authMiddlewareFunc(printHandler.ReprintJob))))
 
 	// Register partner agent routes (optional JWT auth - backward compatible with Python agent)
 	// No rate limiting for agent endpoints (internal communication)
