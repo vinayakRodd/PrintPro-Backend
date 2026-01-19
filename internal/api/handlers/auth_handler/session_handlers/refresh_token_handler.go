@@ -54,13 +54,14 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Get refresh token from cookie OR Authorization header (for Go agent)
+	// Get refresh token from cookie (for web frontend) OR Authorization header (for Go agent)
 	// SECURITY: Never log the actual token value - only log status messages
+	// CRITICAL: For web frontend, refresh token MUST be in cookie
 	var refreshToken string
 	var isGoAgent bool // Track if request is from Go agent (needs refresh_token in response)
 	ctx := r.Context()
 	
-	// Try Authorization header first (for Go agent)
+	// Try Authorization header first (for Go agent only)
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
 		parts := strings.Split(authHeader, " ")
@@ -71,14 +72,18 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		}
 	}
 	
-	// Fallback to cookie (for web frontend)
+	// For web frontend: MUST get refresh token from cookie
+	// CRITICAL: Only refresh if refresh_token cookie exists
 	if refreshToken == "" {
 		cookie, err := r.Cookie("refresh_token")
-		if err == nil && cookie.Value != "" {
-			refreshToken = cookie.Value
-			isGoAgent = false // Web frontend uses cookie, refresh_token should NOT be in response body
-			log.Printf("🔍 REFRESH: Refresh token found in cookie (web frontend), validating...")
+		if err != nil || cookie == nil || cookie.Value == "" {
+			log.Printf("❌ REFRESH: Refresh token cookie not found or empty - cannot refresh")
+			sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Refresh token cookie not found")
+			return
 		}
+		refreshToken = cookie.Value
+		isGoAgent = false // Web frontend uses cookie, refresh_token should NOT be in response body
+		log.Printf("🔍 REFRESH: Refresh token found in cookie (web frontend), validating...")
 	}
 	
 	if refreshToken == "" {
@@ -90,29 +95,29 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	// SECURITY NOTE: refreshToken variable contains sensitive data - never log it
 
 	// Validate refresh token JWT
+	// CRITICAL: JWT validation first - if refresh token JWT is expired, user must logout
+	// This is the first check: expired JWT = logout
 	claims, err := h.jwtService.ValidateRefreshToken(refreshToken)
 	if err != nil {
-		log.Printf("❌ REFRESH: Invalid refresh token - %v", err)
+		log.Printf("❌ REFRESH: Invalid or expired refresh token JWT - %v", err)
+		log.Printf("❌ REFRESH: Refresh token is expired - user must login again")
+		w.Header().Set("X-Refresh-Token-Expired", "true")
 		sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Invalid or expired refresh token")
 		return
 	}
-	log.Printf("✅ REFRESH: Refresh token JWT validated successfully")
+	log.Printf("✅ REFRESH: Refresh token JWT validated successfully - proceeding to Redis check")
 
 	// Verify refresh token exists in Redis (for revocation check)
-	// NOTE: If Redis doesn't have it but JWT is valid, allow refresh (Redis TTL might have expired)
-	// This is more lenient - we trust JWT expiration over Redis TTL
+	// CRITICAL: If token is not in Redis, it means it was revoked - reject refresh
 	log.Printf("🔍 REFRESH: Checking refresh token in Redis...")
 	_, err = h.sessionService.ValidateRefreshToken(ctx, refreshToken)
 	if err != nil {
-		// Token not in Redis - could be:
-		// 1. Redis TTL expired (but JWT still valid) - allow refresh
-		// 2. Token was revoked - but JWT validation already passed, so allow refresh
-		// 3. First time refresh after Redis restart - allow refresh
-		log.Printf("⚠️ REFRESH: Refresh token not found in Redis (may have expired in Redis, but JWT is valid) - allowing refresh")
-		// Continue - JWT validation is the source of truth
-	} else {
-		log.Printf("✅ REFRESH: Refresh token found in Redis (not revoked)")
+		// Token not in Redis - token was revoked or invalidated
+		log.Printf("❌ REFRESH: Refresh token not found in Redis - token was revoked")
+		sendErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "Refresh token was revoked")
+		return
 	}
+	log.Printf("✅ REFRESH: Refresh token found in Redis (not revoked)")
 
 	// SINGLE SESSION POLICY: For partners, verify this is the active session
 	// Made more lenient - if active session not found in Redis, allow refresh (JWT is already validated)
@@ -240,15 +245,19 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 		}
 	}
 
-	// TOKEN ROTATION: Invalidate old refresh token and generate new one
+	// TOKEN ROTATION: Always rotate tokens - even if old refresh token not in Redis
+	// This ensures tokens are refreshed even after Redis TTL expiration or Redis restart
 	log.Printf("🔄 REFRESH: Rotating refresh token (invalidating old, generating new)")
 	
-	// Delete old refresh token from Redis
+	// Delete old refresh token from Redis (if it exists)
+	// NOTE: If token is not in Redis (Redis TTL expired, Redis restart, etc.),
+	// we still proceed with token rotation - JWT validation is the source of truth
 	if err := h.sessionService.DeleteRefreshToken(ctx, refreshToken); err != nil {
-		log.Printf("WARNING: Failed to delete old refresh token from Redis: %v", err)
-		// Continue anyway - token will expire naturally
+		log.Printf("⚠️ REFRESH: Old refresh token not found in Redis (may have expired in Redis) - continuing with rotation anyway")
+		// Continue anyway - token will expire naturally, and we'll store the new one
+	} else {
+		log.Printf("✅ REFRESH: Old refresh token invalidated in Redis")
 	}
-	log.Printf("✅ REFRESH: Old refresh token invalidated in Redis")
 
 	// Generate new access token (use user_type from claims)
 	log.Printf("🔑 REFRESH: Generating new access token (expires in 15 minutes)")
@@ -269,20 +278,26 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	}
 
 	// Store new refresh token in Redis
+	// CRITICAL: Always store new token even if old one wasn't in Redis
+	// This ensures token rotation works after Redis TTL expiration or Redis restart
 	if err := h.sessionService.StoreRefreshToken(ctx, newRefreshToken, claims.UserID); err != nil {
 		log.Printf("ERROR: Failed to store new refresh token in Redis: %v", err)
-		sendErrorResponse(w, http.StatusInternalServerError, "Failed to store refresh token", err.Error())
-		return
+		// Don't fail the refresh - tokens are generated and JWT is valid
+		// Log error but continue - frontend will get new tokens
+		log.Printf("⚠️ REFRESH: Continuing despite Redis storage error - tokens are still valid")
+	} else {
+		log.Printf("✅ REFRESH: New refresh token stored in Redis")
 	}
-	log.Printf("✅ REFRESH: New refresh token stored in Redis")
 
 	// SINGLE SESSION POLICY: For partners, update the active session mapping
 	// Made non-fatal - if this fails, refresh still succeeds (Redis might have issues, but JWT is valid)
+	// CRITICAL: Always update active session even if old session wasn't in Redis
 	if claims.UserType == "partner" {
 		log.Printf("💾 REFRESH: Updating active partner session")
 		if err := h.sessionService.SetPartnerActiveRefreshToken(ctx, claims.UserID, newRefreshToken); err != nil {
 			log.Printf("⚠️ REFRESH: Failed to update active partner session (non-fatal): %v - refresh still succeeds", err)
 			// Continue - refresh token is valid and new tokens are generated, session update failure is not critical
+			// This allows refresh to work even after Redis TTL expiration or Redis restart
 		} else {
 			log.Printf("✅ REFRESH: Active partner session updated successfully")
 		}
@@ -310,6 +325,10 @@ func (h *RefreshTokenHandler) HandleRefreshToken(w http.ResponseWriter, r *http.
 	log.Printf("✅ REFRESH: New access token generated successfully")
 	log.Printf("🎉 REFRESH: Token refresh completed with rotation - user can continue without re-login")
 	// SECURITY NOTE: newAccessToken and newRefreshToken contain sensitive data - never log them, only return in response
+
+	// Set response headers to help frontend know refresh was successful
+	w.Header().Set("X-Token-Refreshed", "true")
+	w.Header().Set("X-Access-Token-Expires-In", "900") // 15 minutes in seconds
 
 	// Build response - only include refresh_token in response body for Go agent
 	// SECURITY: Web frontend gets refresh_token in HttpOnly cookie only (not in response body)

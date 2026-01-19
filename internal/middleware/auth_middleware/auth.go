@@ -42,9 +42,13 @@ func AuthMiddleware(sessionService *session.SessionService, jwtService *jwt.JWTS
 			if err != nil {
 				log.Printf("❌ AUTH: Access token validation failed - %v", err)
 				log.Printf("💡 AUTH: Access token expired or invalid - frontend should call /api/auth/refresh")
+				
+				// Set header to indicate frontend should refresh token (not logout)
+				w.Header().Set("X-Token-Expired", "true")
+				w.Header().Set("X-Should-Refresh", "true")
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(`{"success": false, "message": "Unauthorized", "error": "Invalid or expired access token"}`))
+				w.Write([]byte(`{"success": false, "message": "Unauthorized", "error": "Invalid or expired access token", "code": "ACCESS_TOKEN_EXPIRED"}`))
 				return
 			}
 			
