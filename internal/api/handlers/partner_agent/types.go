@@ -27,6 +27,7 @@ type SyncPrintersRequest struct {
 type PrintJobRepository interface {
 	GetByFilename(ctx context.Context, filename string) (*printjob.PrintJob, error)
 	UpdateStatus(ctx context.Context, filename, status string) error
+	GetPendingByPartnerEmail(ctx context.Context, partnerEmail string) ([]printjob.PrintJob, error)
 }
 
 // JobCostRepository interface for job cost operations

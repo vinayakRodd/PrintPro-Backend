@@ -49,19 +49,19 @@ func (h *PrintHandler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	partnerEmail := partnerProfile.PartnerEmail
-	log.Printf("INFO: Listing files for partner (shop: %s)", partnerProfile.ShopName)
+	log.Printf("INFO: Listing pending files for partner (shop: %s)", partnerProfile.ShopName)
 
-	// SECURITY: Get all print jobs that belong to THIS partner ONLY from database
-	// This ensures partners only see files uploaded to their shop, not other shops
-	// Database is the source of truth - we ONLY iterate through files in the database for this partner
-	// Using GetByPartnerEmail to get full records and verify partner_email matches
-	partnerJobs, err := h.printJobRepo.GetByPartnerEmail(ctx, partnerEmail)
+	// SECURITY: Get only pending print jobs that belong to THIS partner ONLY from database
+	// This ensures partners only see pending files uploaded to their shop, not other shops
+	// Database is the source of truth - we ONLY iterate through pending files in the database for this partner
+	// Using GetPendingByPartnerEmail to get only pending jobs and verify partner_email matches
+	partnerJobs, err := h.printJobRepo.GetPendingByPartnerEmail(ctx, partnerEmail)
 	if err != nil {
-		log.Printf("ERROR: Failed to get partner print jobs from database: %v (will show no files for security)", err)
+		log.Printf("ERROR: Failed to get pending partner print jobs from database: %v (will show no files for security)", err)
 		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to retrieve files")
 		return
 	}
-	log.Printf("INFO: Found %d print jobs in database for partner (shop-specific filtering applied)", len(partnerJobs))
+	log.Printf("INFO: Found %d pending print jobs in database for partner (shop-specific filtering applied)", len(partnerJobs))
 
 	// SECURITY: Double-check and filter out any jobs that don't match partner_email
 	// This is a defensive check in case the database query somehow returns wrong data

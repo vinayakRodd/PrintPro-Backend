@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"print-pro-backend/internal/middleware/auth_middleware"
+	"print-pro-backend/internal/models/printjob"
 	"strings"
 )
 
@@ -26,49 +27,74 @@ func (h *PrintHandler) ListCustomerFiles(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Verify user is a customer
-	if user.UserType != "customer" {
-		h.sendErrorResponse(w, http.StatusForbidden, "Forbidden", "Only customers can view their files")
-		return
-	}
-
 	ctx := r.Context()
 
 	// Get account_email from user.ID (user.ID is the email)
 	accountEmail := user.ID
 
-	// Get shop_name query parameter (REQUIRED)
-	// SECURITY: shop_name is mandatory - customers can only view files for a specific shop
-	shopName := r.URL.Query().Get("shop_name")
-	if shopName == "" {
-		log.Printf("ERROR: shop_name parameter is required but not provided")
-		h.sendErrorResponse(w, http.StatusBadRequest, "Shop name required", "Please provide shop_name query parameter to view files for a specific shop")
+	var printJobs []printjob.PrintJob
+
+	// Handle partners: fetch only pending files
+	if user.UserType == "partner" {
+		// Get partner profile to get partner_email
+		partnerProfile, err := h.partnerProfileRepo.GetByAccountEmail(ctx, accountEmail)
+		if err != nil {
+			log.Printf("ERROR: Partner profile not found - %v", err)
+			h.sendErrorResponse(w, http.StatusNotFound, "Partner profile not found", "Partner profile not found for this account")
+			return
+		}
+
+		partnerEmail := partnerProfile.PartnerEmail
+		log.Printf("INFO: Partner requested pending files for shop: %s", partnerProfile.ShopName)
+
+		// Get only pending jobs for this partner
+		var err2 error
+		printJobs, err2 = h.printJobRepo.GetPendingByPartnerEmail(ctx, partnerEmail)
+		if err2 != nil {
+			log.Printf("ERROR: Failed to get pending print jobs - %v", err2)
+			h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to retrieve files")
+			return
+		}
+		log.Printf("INFO: Found %d pending files for partner", len(printJobs))
+	} else if user.UserType == "customer" {
+		// Handle customers: existing logic with shop_name parameter
+		// Get shop_name query parameter (REQUIRED)
+		// SECURITY: shop_name is mandatory - customers can only view files for a specific shop
+		shopName := r.URL.Query().Get("shop_name")
+		if shopName == "" {
+			log.Printf("ERROR: shop_name parameter is required but not provided")
+			h.sendErrorResponse(w, http.StatusBadRequest, "Shop name required", "Please provide shop_name query parameter to view files for a specific shop")
+			return
+		}
+
+		shopName = strings.TrimSpace(shopName)
+		log.Printf("INFO: Customer requested files for shop: %s", shopName)
+
+		// Get partner_email from shop_name
+		partnerProfile, err := h.partnerProfileRepo.GetByShopName(ctx, shopName)
+		if err != nil {
+			log.Printf("ERROR: Shop not found: %s - %v", shopName, err)
+			h.sendErrorResponse(w, http.StatusBadRequest, "Invalid shop", fmt.Sprintf("Shop '%s' not found", shopName))
+			return
+		}
+
+		partnerEmail := partnerProfile.PartnerEmail
+		log.Printf("INFO: Querying files for customer AND shop '%s'", shopName)
+
+		// SECURITY: Query database with BOTH account_email AND partner_email - database-level filtering
+		// This ensures customers only see files they uploaded to the specific shop
+		var err2 error
+		printJobs, err2 = h.printJobRepo.GetByAccountEmailAndPartnerEmail(ctx, accountEmail, partnerEmail)
+		if err2 != nil {
+			log.Printf("ERROR: Failed to get print jobs - %v", err2)
+			h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to retrieve files")
+			return
+		}
+		log.Printf("INFO: Found %d files for customer in shop '%s'", len(printJobs), shopName)
+	} else {
+		h.sendErrorResponse(w, http.StatusForbidden, "Forbidden", "Only customers and partners can view files")
 		return
 	}
-
-	shopName = strings.TrimSpace(shopName)
-	log.Printf("INFO: Customer requested files for shop: %s", shopName)
-
-	// Get partner_email from shop_name
-	partnerProfile, err := h.partnerProfileRepo.GetByShopName(ctx, shopName)
-	if err != nil {
-		log.Printf("ERROR: Shop not found: %s - %v", shopName, err)
-		h.sendErrorResponse(w, http.StatusBadRequest, "Invalid shop", fmt.Sprintf("Shop '%s' not found", shopName))
-		return
-	}
-
-	partnerEmail := partnerProfile.PartnerEmail
-	log.Printf("INFO: Querying files for customer AND shop '%s'", shopName)
-
-	// SECURITY: Query database with BOTH account_email AND partner_email - database-level filtering
-	// This ensures customers only see files they uploaded to the specific shop
-	printJobs, err := h.printJobRepo.GetByAccountEmailAndPartnerEmail(ctx, accountEmail, partnerEmail)
-	if err != nil {
-		log.Printf("ERROR: Failed to get print jobs - %v", err)
-		h.sendErrorResponse(w, http.StatusInternalServerError, "Internal error", "Failed to retrieve files")
-		return
-	}
-	log.Printf("INFO: Found %d files for customer in shop '%s'", len(printJobs), shopName)
 
 	readyDir := h.agentHandler.GetReadyDir()
 	fileList := []map[string]interface{}{}
